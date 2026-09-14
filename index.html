@@ -1,0 +1,1149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Subhash Sales Agencies — Order & Dispatch</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --navy:#1656A6;
+    --linen:#F3F6FA;
+    --mustard:#2F86D6;
+    --ink:#1B2430;
+    --rust:#B4552F;
+    --sage:#2E7D4F;
+    --line:#D5DFEC;
+    --card:#FFFFFF;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{
+    margin:0;
+    background:var(--linen);
+    color:var(--ink);
+    font-family:'IBM Plex Sans',sans-serif;
+    font-size:16px;
+    -webkit-text-size-adjust:100%;
+  }
+  body{ padding-bottom:76px; }
+  .topbar{
+    position:sticky; top:0; z-index:20;
+    background:var(--navy);
+    color:#fff;
+    padding:14px 16px;
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    gap:10px;
+    flex-wrap:wrap;
+    box-shadow:0 2px 8px rgba(0,0,0,.15);
+  }
+  .topbar h1{
+    font-family:'Fraunces',serif;
+    font-weight:700;
+    font-size:18px;
+    margin:0;
+  }
+  .topbar-right{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .closing-badge{
+    background:#FFD166;
+    color:#3A2A0F;
+    font-weight:700;
+    font-size:12.5px;
+    padding:6px 11px;
+    border-radius:20px;
+    white-space:nowrap;
+  }
+  .staff-badge{
+    background:rgba(255,255,255,.15);
+    color:#fff;
+    font-size:12px;
+    font-weight:600;
+    padding:6px 10px;
+    border-radius:20px;
+    display:flex;
+    align-items:center;
+    gap:8px;
+    white-space:nowrap;
+  }
+  .staff-badge button{
+    background:none; border:none; color:#FFD166;
+    font-size:11.5px; font-weight:700; padding:0; text-decoration:underline;
+  }
+  main{ padding:14px; max-width:640px; margin:0 auto; }
+  .card{
+    background:var(--card);
+    border:1px solid var(--line);
+    border-radius:10px;
+    padding:16px;
+    margin-bottom:14px;
+  }
+  .card h2{
+    font-family:'Fraunces',serif;
+    font-weight:700;
+    font-size:18px;
+    margin:0 0 12px 0;
+  }
+  label{
+    display:block;
+    font-size:13px;
+    color:#5b6472;
+    margin-bottom:5px;
+    font-weight:600;
+  }
+  input, select{
+    width:100%;
+    padding:12px 12px;
+    border:1px solid var(--line);
+    border-radius:8px;
+    font-size:16px;
+    font-family:'IBM Plex Sans',sans-serif;
+    background:#fff;
+    color:var(--ink);
+  }
+  input:focus, select:focus{
+    outline:2px solid var(--navy);
+    outline-offset:1px;
+    border-color:var(--navy);
+  }
+  .row{ display:flex; gap:8px; margin-bottom:10px; align-items:flex-end; }
+  .row > *{ flex:1; }
+  .row .btn-inline{ flex:none; width:52px; }
+  button{ font-family:'IBM Plex Sans',sans-serif; cursor:pointer; }
+  button.primary{
+    width:100%;
+    background:var(--navy);
+    color:#fff;
+    border:none;
+    padding:14px;
+    border-radius:8px;
+    font-size:16px;
+    font-weight:700;
+    margin-top:6px;
+  }
+  button.primary:active{ background:#0F3E7A; }
+  button.primary:disabled{ background:#B7BCC6; }
+  button.secondary{
+    width:100%;
+    background:#EAF1FB;
+    color:var(--navy);
+    border:1px solid var(--line);
+    padding:12px;
+    border-radius:8px;
+    font-size:15px;
+    font-weight:600;
+  }
+  button.small{
+    background:var(--navy);
+    color:#fff;
+    border:none;
+    border-radius:8px;
+    font-size:20px;
+    font-weight:700;
+    line-height:1;
+    padding:12px 0;
+  }
+  .chip{
+    display:inline-flex;
+    align-items:center;
+    gap:6px;
+    background:#EAF1FB;
+    border:1px solid var(--line);
+    padding:7px 10px;
+    border-radius:20px;
+    font-size:13.5px;
+    margin:0 6px 6px 0;
+  }
+  .chip button.x{
+    background:none; border:none; color:var(--rust);
+    font-size:16px; padding:0; line-height:1; font-weight:700;
+  }
+  .design-block{
+    border:1px solid var(--line);
+    border-radius:8px;
+    padding:10px 12px;
+    margin-bottom:10px;
+  }
+  .design-block .dhead{
+    display:flex; justify-content:space-between; align-items:center;
+    font-weight:700; margin-bottom:6px;
+  }
+  .empty{
+    text-align:center; padding:34px 12px; color:#7e8896; font-size:14.5px;
+  }
+  .msg{ padding:10px 14px; border-radius:8px; font-size:13.5px; margin-bottom:12px; }
+  .msg.err{ background:#F7E4DA; color:var(--rust); border:1px solid #E5B79E; }
+  .msg.ok{ background:#E3EFE8; color:#245C3B; border:1px solid #BFDCC9; }
+  .msg.info{ background:#EAF1FB; color:var(--navy); border:1px solid var(--line); }
+
+  .bottom-nav{
+    position:fixed; bottom:0; left:0; right:0; z-index:20;
+    background:var(--navy);
+    display:flex;
+    overflow-x:auto;
+    padding:6px 2px calc(6px + env(safe-area-inset-bottom));
+    box-shadow:0 -2px 10px rgba(0,0,0,.2);
+  }
+  .navbtn{
+    flex:1 0 auto;
+    min-width:52px;
+    background:none; border:none; color:#C7D8F0;
+    font-size:10.3px; font-weight:600;
+    padding:8px 2px;
+    border-radius:8px;
+    display:flex; flex-direction:column; align-items:center; gap:2px;
+  }
+  .navbtn.active{ color:#fff; background:rgba(255,255,255,.14); }
+  .navbtn .ic{ font-size:16px; }
+
+  .set-pill{
+    display:inline-block; font-size:12.5px; font-weight:700;
+    padding:4px 10px; border-radius:14px;
+  }
+  .set-pill.pending{ background:#F7E4DA; color:var(--rust); }
+  .set-pill.done{ background:#E3EFE8; color:var(--sage); }
+
+  .cust-card{
+    border:1px solid var(--line); border-radius:10px; padding:14px; margin-bottom:12px;
+  }
+  .cust-head{
+    display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;
+  }
+  .cust-head .name{ font-weight:700; font-size:16px; }
+  .size-btn{
+    padding:9px 12px;
+    border-radius:8px;
+    border:1.5px solid var(--navy);
+    background:#fff;
+    color:var(--navy);
+    font-size:14px;
+    font-weight:700;
+    margin:0 8px 8px 0;
+  }
+  .size-btn:active{ background:var(--navy); color:#fff; }
+  .size-btn.done{
+    border:1.5px solid var(--line);
+    color:#a3aec0;
+    background:#EEF2F8;
+    opacity:.55;
+  }
+  .summary-row{
+    display:flex; gap:14px; font-size:13px; color:#5b6472; margin-top:2px;
+  }
+  .filter-input{ margin-bottom:12px; }
+  .cust-detail{
+    margin-top:10px; padding-top:10px; border-top:1px dashed var(--line);
+    font-size:13.5px;
+  }
+  .cust-detail .li{
+    display:flex; justify-content:space-between; padding:5px 0;
+  }
+  .undo-link{
+    background:none; border:none; color:var(--rust); font-size:12px;
+    text-decoration:underline; padding:0;
+  }
+  .section-label{
+    font-size:12px; font-weight:700; color:#5b6472; margin:10px 0 4px;
+  }
+  .item-line{
+    display:flex; justify-content:space-between;
+    padding:6px 0; font-size:14px; border-bottom:1px solid var(--line);
+  }
+  .item-line:last-child{ border-bottom:none; }
+  .order-total-line{
+    display:flex; justify-content:space-between; font-weight:700;
+    padding-top:10px; margin-top:6px; border-top:2px solid var(--ink);
+    font-size:15px;
+  }
+  .action-row{ display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; }
+  .action-btn{
+    flex:1; min-width:80px;
+    border:none; border-radius:8px; padding:10px 8px;
+    font-size:12.5px; font-weight:700; text-align:center;
+  }
+  .action-btn.wa{ background:#3F7B4F; color:#fff; }
+  .action-btn.pr{ background:var(--navy); color:#fff; }
+  .action-btn.del{ background:#fff; color:var(--rust); border:1.5px solid var(--rust); }
+  .trash-card{
+    border:1px dashed var(--line); border-radius:10px; padding:12px 14px;
+    margin-bottom:10px; background:#EEF2F8;
+  }
+  .trash-head{ display:flex; justify-content:space-between; align-items:center; }
+  .restore-btn{
+    background:var(--sage); color:#fff; border:none; border-radius:8px;
+    padding:8px 12px; font-size:13px; font-weight:700;
+  }
+  .subtle{ color:#7e8896; font-size:12.5px; }
+
+  .log-card{
+    border:1px solid var(--line); border-radius:10px; padding:12px 14px; margin-bottom:10px;
+  }
+  .log-top{ display:flex; justify-content:space-between; align-items:baseline; margin-bottom:4px; }
+  .log-staff{ font-weight:700; font-size:14px; }
+  .log-time{ font-size:11.5px; color:#7e8896; }
+  .log-action{ font-size:12.5px; font-weight:700; color:var(--navy); margin-bottom:2px; }
+  .log-detail{ font-size:13.5px; color:#3a4453; }
+
+  .login-wrap{
+    min-height:calc(100vh - 70px);
+    display:flex; align-items:center; justify-content:center; padding:24px;
+  }
+  .login-card{
+    background:#fff; border:1px solid var(--line); border-radius:14px;
+    padding:28px 22px; max-width:380px; width:100%;
+  }
+  .login-card h2{
+    font-family:'Fraunces',serif; font-weight:700; font-size:22px; margin:0 0 6px 0;
+    color:var(--navy);
+  }
+  .login-card p{ font-size:13.5px; color:#5b6472; margin:0 0 18px 0; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <h1>Subhash Sales Agencies</h1>
+  <div class="topbar-right" id="topbarRight"></div>
+</div>
+
+<main id="main"></main>
+
+<div class="bottom-nav" id="bottomNav">
+  <button class="navbtn active" data-tab="book"><span class="ic">📝</span>Order</button>
+  <button class="navbtn" data-tab="dispatch"><span class="ic">🔎</span>Article</button>
+  <button class="navbtn" data-tab="dispatchedOrders"><span class="ic">📦</span>Dispatched</button>
+  <button class="navbtn" data-tab="pendingOrders"><span class="ic">⏳</span>Pending</button>
+  <button class="navbtn" data-tab="customers"><span class="ic">👤</span>Customers</button>
+  <button class="navbtn" data-tab="deletedOrders"><span class="ic">🗑️</span>Deleted</button>
+  <button class="navbtn" data-tab="activity"><span class="ic">📋</span>Activity</button>
+</div>
+
+<datalist id="customerList"></datalist>
+<datalist id="designList"></datalist>
+<datalist id="brandList"></datalist>
+
+<script>
+let bookings = [];      // {id, customerName, brand, designNumber, size, qty, status, orderedAt, dispatchedAt, orderedBy, dispatchedBy, trashed, trashedAt, trashedBy}
+let activityLog = [];   // {id, staffName, staffMobile, action, detail, timestamp}
+let loaded = false;
+let currentTab = 'book';
+let currentStaff = null; // {name, mobile} - session only, not persisted across reloads
+
+// in-memory draft for current booking session
+let draftCustomer = '';
+let draftBrand = '';
+let draftCart = [];          // [{designNumber, sizes:[{size, qty}]}]
+let tempDesignNumber = '';
+let tempSizes = [];          // [{size, qty}]
+
+let dispatchQuery = '';
+let customerFilter = '';
+let customerBrandFilter = '';
+let expandedCustomer = null;
+
+// dispatched-orders tab search state
+let doSearchDesign = '';
+let doSearchCustomer = '';
+
+// pending-orders tab search state
+let pdSearchCustomer = '';
+
+const SHEET_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwR28myzk020v3-yd25OrjHCKb4ujzoxXyURe7GAcrt5cpSUZ7-_BAQ39t_NiZcJMc3yw/exec';
+const cloudAvailable = !!(SHEET_SCRIPT_URL && SHEET_SCRIPT_URL.startsWith('http'));
+
+function uid(){ return 'b' + Math.random().toString(36).slice(2,10); }
+function escapeHtml(str){
+  return String(str).replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+function fmtTime(iso){
+  const d = new Date(iso);
+  return d.toLocaleString('en-IN', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' });
+}
+
+// Primary storage: Google Sheets (via Apps Script Web App) — syncs across all staff devices.
+// Backup storage: this browser's localStorage — used if the Sheets call fails
+// (e.g. no internet at that moment), so nothing gets lost.
+async function storageGet(key){
+  if(cloudAvailable){
+    try{
+      const res = await fetch(`${SHEET_SCRIPT_URL}?key=${encodeURIComponent(key)}`);
+      const data = await res.json();
+      if(data && data.value !== null && data.value !== undefined) return data.value;
+      return null;
+    }catch(e){ console.error('Sheet fetch failed, using local backup', e); }
+  }
+  try{ return localStorage.getItem('ssa_'+key); }
+  catch(e){ return null; }
+}
+async function storageSet(key, value){
+  if(cloudAvailable){
+    try{
+      await fetch(SHEET_SCRIPT_URL, {
+        method:'POST',
+        headers: {'Content-Type':'text/plain;charset=utf-8'},
+        body: JSON.stringify({ key, value })
+      });
+    }catch(e){ console.error('Sheet save failed, saved locally only', e); }
+  }
+  try{ localStorage.setItem('ssa_'+key, value); }
+  catch(e){ console.error('local storage failed', e); }
+}
+
+async function loadData(){
+  try{
+    const v = await storageGet('bookings');
+    bookings = v ? JSON.parse(v) : [];
+  }catch(e){ bookings = []; }
+  try{
+    const v2 = await storageGet('activityLog');
+    activityLog = v2 ? JSON.parse(v2) : [];
+  }catch(e){ activityLog = []; }
+  loaded = true;
+  render();
+}
+async function saveData(){
+  try{ await storageSet('bookings', JSON.stringify(bookings)); }
+  catch(e){ console.error('save failed', e); }
+}
+async function saveActivity(){
+  try{ await storageSet('activityLog', JSON.stringify(activityLog)); }
+  catch(e){ console.error('activity save failed', e); }
+}
+async function logActivity(action, detail){
+  if(!currentStaff) return;
+  activityLog.unshift({
+    id: uid(),
+    staffName: currentStaff.name,
+    staffMobile: currentStaff.mobile,
+    action,
+    detail,
+    timestamp: new Date().toISOString()
+  });
+  await saveActivity();
+}
+
+document.querySelectorAll('.navbtn').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    document.querySelectorAll('.navbtn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    currentTab = btn.dataset.tab;
+    render();
+  });
+});
+
+function renderTopbarRight(){
+  const el = document.getElementById('topbarRight');
+  if(!currentStaff){ el.innerHTML = ''; return; }
+  const pending = bookings.filter(b=>b.status==='pending' && !b.trashed).reduce((s,b)=>s+b.qty,0);
+  el.innerHTML = `
+    <span class="closing-badge">Pending: ${pending} Sets</span>
+    <span class="staff-badge">👤 ${escapeHtml(currentStaff.name)} <button onclick="logoutStaff()">Switch</button></span>
+  `;
+}
+
+function updateDatalists(){
+  const custs = [...new Set(bookings.map(b=>b.customerName))];
+  document.getElementById('customerList').innerHTML = custs.map(c=>`<option value="${escapeHtml(c)}">`).join('');
+  const designs = [...new Set(bookings.map(b=>b.designNumber))];
+  document.getElementById('designList').innerHTML = designs.map(d=>`<option value="${escapeHtml(d)}">`).join('');
+  const brands = [...new Set(bookings.map(b=>b.brand).filter(Boolean))];
+  document.getElementById('brandList').innerHTML = brands.map(b=>`<option value="${escapeHtml(b)}">`).join('');
+}
+
+function render(){
+  const main = document.getElementById('main');
+  const bottomNav = document.getElementById('bottomNav');
+  if(!loaded){ main.innerHTML = '<div class="empty">Loading...</div>'; return; }
+
+  if(!currentStaff){
+    bottomNav.style.display = 'none';
+    document.getElementById('topbarRight').innerHTML = '';
+    renderLogin(main);
+    return;
+  }
+  bottomNav.style.display = 'flex';
+
+  renderTopbarRight();
+  updateDatalists();
+  if(currentTab==='book') renderBook(main);
+  else if(currentTab==='dispatch') renderDispatch(main);
+  else if(currentTab==='dispatchedOrders') renderDispatchedOrders(main);
+  else if(currentTab==='pendingOrders') renderPendingOrders(main);
+  else if(currentTab==='deletedOrders') renderDeletedOrders(main);
+  else if(currentTab==='activity') renderActivity(main);
+  else renderCustomers(main);
+}
+
+/* ---------------- LOGIN ---------------- */
+
+function renderLogin(main){
+  main.innerHTML = `
+    <div class="login-wrap">
+      <div class="login-card">
+        <h2>Staff Login</h2>
+        <p>Enter your name and mobile number to continue. This is used to identify who did what in the app.</p>
+        ${!cloudAvailable ? `<div class="msg err">Google Sheets backend URL is not set up yet. Data will only be saved on this phone and won't be visible to other staff.</div>` : ''}
+        <div id="loginMsg"></div>
+        <label>Your Name</label>
+        <input id="loginName" placeholder="e.g. Ramesh">
+        <label style="margin-top:10px;">Mobile Number</label>
+        <input id="loginMobile" type="tel" placeholder="10-digit mobile number">
+        <button class="primary" onclick="loginStaff()">Continue</button>
+      </div>
+    </div>
+  `;
+  setTimeout(()=>{ const el = document.getElementById('loginName'); if(el) el.focus(); }, 0);
+}
+
+function loginStaff(){
+  const name = document.getElementById('loginName').value.trim();
+  const mobile = document.getElementById('loginMobile').value.trim();
+  const msg = document.getElementById('loginMsg');
+  if(!name){ msg.innerHTML = `<div class="msg err">Please enter your name</div>`; return; }
+  if(!mobile || mobile.length < 10){ msg.innerHTML = `<div class="msg err">Please enter a valid mobile number</div>`; return; }
+  currentStaff = { name, mobile };
+  render();
+}
+
+function logoutStaff(){
+  currentStaff = null;
+  currentTab = 'book';
+  document.querySelectorAll('.navbtn').forEach(b=>b.classList.remove('active'));
+  const first = document.querySelector('.navbtn[data-tab="book"]');
+  if(first) first.classList.add('active');
+  render();
+}
+
+/* ---------------- BOOK ORDER TAB ---------------- */
+
+function renderBook(main){
+  const cartBlocks = draftCart.map((d, idx)=>{
+    const chips = d.sizes.map(s=>`<span class="chip">${escapeHtml(s.size)} · ${s.qty}</span>`).join('');
+    return `<div class="design-block">
+      <div class="dhead"><span>Design No. ${escapeHtml(d.designNumber)}</span>
+      <button class="chip x" style="border:none;background:none;color:var(--rust);font-weight:700;" onclick="removeCartDesign(${idx})">Remove ✕</button></div>
+      <div>${chips}</div>
+    </div>`;
+  }).join('');
+
+  const tempChips = tempSizes.map((s, i)=>`<span class="chip">${escapeHtml(s.size)} · ${s.qty} <button class="x" onclick="removeTempSize(${i})">×</button></span>`).join('');
+
+  main.innerHTML = `
+    <div class="card">
+      <h2>Customer Name</h2>
+      <input id="custName" list="customerList" placeholder="Enter customer name" value="${escapeHtml(draftCustomer)}" oninput="draftCustomer=this.value">
+      <label style="margin-top:10px;">Brand Name</label>
+      <input id="custBrand" list="brandList" placeholder="Enter brand name" value="${escapeHtml(draftBrand)}" oninput="draftBrand=this.value">
+    </div>
+
+    <div class="card">
+      <h2>Add Design</h2>
+      <div id="bookMsg"></div>
+      <label>Design Number</label>
+      <input id="designNo" list="designList" placeholder="e.g. 2145" value="${escapeHtml(tempDesignNumber)}" oninput="tempDesignNumber=this.value">
+
+      <div class="row" style="margin-top:10px;">
+        <div>
+          <label>Size</label>
+          <input id="sizeVal" placeholder="e.g. M">
+        </div>
+        <div>
+          <label>Set</label>
+          <input id="qtyVal" type="number" min="1" value="1">
+        </div>
+        <button class="small btn-inline" onclick="addTempSize()">+</button>
+      </div>
+      <div>${tempChips || '<span style="color:#7e8896;font-size:13px;">No size added yet</span>'}</div>
+
+      <button class="secondary" style="margin-top:12px;" onclick="addDesignToCart()">Add This Design to Order</button>
+    </div>
+
+    <div class="card">
+      <h2>Designs in This Order (${draftCart.length})</h2>
+      ${cartBlocks || '<div class="empty">No design added yet</div>'}
+      ${draftCart.length ? `<button class="primary" onclick="saveOrder()">Save Order</button>` : ''}
+    </div>
+  `;
+}
+
+function addTempSize(){
+  const sizeInput = document.getElementById('sizeVal');
+  const qtyInput = document.getElementById('qtyVal');
+  const size = sizeInput.value.trim();
+  const qty = parseInt(qtyInput.value) || 0;
+  const msg = document.getElementById('bookMsg');
+  if(!size || qty <= 0){
+    msg.innerHTML = `<div class="msg err">Please enter size and set correctly</div>`;
+    return;
+  }
+  tempSizes.push({ size, qty });
+  sizeInput.value = '';
+  qtyInput.value = '1';
+  msg.innerHTML = '';
+  render();
+  setTimeout(()=>document.getElementById('sizeVal').focus(), 0);
+}
+
+function removeTempSize(i){ tempSizes.splice(i,1); render(); }
+
+function addDesignToCart(){
+  const designNo = document.getElementById('designNo').value.trim();
+  const msg = document.getElementById('bookMsg');
+  if(!designNo){ msg.innerHTML = `<div class="msg err">Please enter design number</div>`; return; }
+  if(!tempSizes.length){ msg.innerHTML = `<div class="msg err">Add at least one size</div>`; return; }
+  draftCart.push({ designNumber: designNo, sizes: tempSizes });
+  tempDesignNumber = '';
+  tempSizes = [];
+  render();
+  setTimeout(()=>document.getElementById('designNo').focus(), 0);
+}
+
+function removeCartDesign(idx){ draftCart.splice(idx,1); render(); }
+
+async function saveOrder(){
+  const custName = (document.getElementById('custName').value || '').trim();
+  const custBrand = (document.getElementById('custBrand').value || '').trim();
+  const msg = document.getElementById('bookMsg');
+  if(!custName){ msg.innerHTML = `<div class="msg err">Please enter customer name</div>`; return; }
+  if(!draftCart.length){ return; }
+
+  const now = new Date().toISOString();
+  let totalSets = 0;
+  draftCart.forEach(d=>{
+    d.sizes.forEach(s=>{
+      totalSets += s.qty;
+      bookings.push({
+        id: uid(),
+        customerName: custName,
+        brand: custBrand,
+        designNumber: d.designNumber,
+        size: s.size,
+        qty: s.qty,
+        status: 'pending',
+        orderedAt: now,
+        dispatchedAt: null,
+        orderedBy: currentStaff ? { name: currentStaff.name, mobile: currentStaff.mobile } : null
+      });
+    });
+  });
+  await saveData();
+
+  const count = draftCart.length;
+  await logActivity('Order Booked', `${custName}${custBrand ? ' ('+custBrand+')' : ''} — ${count} design(s), ${totalSets} sets`);
+
+  draftCart = [];
+  draftCustomer = '';
+  draftBrand = '';
+  tempDesignNumber = '';
+  tempSizes = [];
+  render();
+  const m2 = document.getElementById('bookMsg');
+  if(m2) m2.innerHTML = `<div class="msg ok">${count} designs saved to order</div>`;
+}
+
+/* ---------------- ARTICLE (DISPATCH) SEARCH TAB ---------------- */
+
+function renderDispatch(main){
+  const q = dispatchQuery.trim().toLowerCase();
+  const activeBookings = bookings.filter(b=>!b.trashed);
+  const allDesigns = [...new Set(activeBookings.map(b=>b.designNumber))];
+  const matchingDesigns = q ? allDesigns.filter(d=>d.toLowerCase().includes(q)) : [];
+
+  let resultsHtml = '';
+
+  if(q && !matchingDesigns.length){
+    resultsHtml = `<div class="empty">No order found for this article number</div>`;
+  } else if(matchingDesigns.length > 1){
+    resultsHtml = `<div class="card">
+      <div class="section-label" style="margin-top:0;">Matching Articles — Select One</div>
+      ${matchingDesigns.map(d=>`<button class="secondary" style="margin-top:8px;text-align:left;" onclick="pickDesign('${d.replace(/'/g,"\\'")}')">${escapeHtml(d)}</button>`).join('')}
+    </div>`;
+  } else if(matchingDesigns.length === 1){
+    const exactDesign = matchingDesigns[0];
+    const matches = activeBookings.filter(b=>b.designNumber===exactDesign);
+    const pendingQty = matches.filter(b=>b.status==='pending').reduce((s,b)=>s+b.qty,0);
+    const doneQty = matches.filter(b=>b.status==='dispatched').reduce((s,b)=>s+b.qty,0);
+
+    const customers = [...new Set(matches.map(b=>b.customerName))];
+    const custCards = customers.map(cname=>{
+      const rows = matches.filter(b=>b.customerName===cname);
+      const chips = rows.map(b=>{
+        const done = b.status==='dispatched';
+        return `<button class="size-btn ${done?'done':''}" ${done?'disabled':''} onclick="dispatchOne('${b.id}')">${escapeHtml(b.size)} · ${b.qty}${done?' ✓':''}</button>`;
+      }).join('');
+      return `<div class="cust-card">
+        <div class="cust-head"><span class="name">${escapeHtml(cname)}</span></div>
+        <div>${chips}</div>
+      </div>`;
+    }).join('');
+
+    resultsHtml = `
+      <div class="card">
+        <div class="section-label" style="margin-top:0;">Article: ${escapeHtml(exactDesign)}</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <span class="set-pill pending">Closing Set: ${pendingQty} Pending</span>
+          <span class="set-pill done">Dispatched: ${doneQty}</span>
+        </div>
+      </div>
+      ${custCards}
+    `;
+  }
+
+  main.innerHTML = `
+    <div class="card">
+      <h2>Search by Article Number</h2>
+      <input id="dispatchSearch" list="designList" placeholder="Enter full or partial article number" value="${escapeHtml(dispatchQuery)}" oninput="onDispatchSearch(this.value)" autofocus>
+    </div>
+    ${resultsHtml}
+  `;
+}
+
+function pickDesign(fullDesign){
+  dispatchQuery = fullDesign;
+  render();
+}
+
+function onDispatchSearch(val){
+  dispatchQuery = val;
+  render();
+  setTimeout(()=>{
+    const el = document.getElementById('dispatchSearch');
+    if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+  }, 0);
+}
+
+async function dispatchOne(bookingId){
+  const b = bookings.find(x=>x.id===bookingId);
+  if(!b || b.status==='dispatched') return;
+  b.status = 'dispatched';
+  b.dispatchedAt = new Date().toISOString();
+  b.dispatchedBy = currentStaff ? { name: currentStaff.name, mobile: currentStaff.mobile } : null;
+  await saveData();
+  await logActivity('Item Dispatched', `${b.customerName} — Design ${b.designNumber}, ${b.size} × ${b.qty}`);
+  render();
+}
+
+/* ---------------- DISPATCHED ORDERS TAB ---------------- */
+
+function renderDispatchedOrders(main){
+  const dispatchedAll = bookings.filter(b=>b.status==='dispatched' && !b.trashed);
+
+  let matchedCustomers = [...new Set(dispatchedAll.map(b=>b.customerName))];
+
+  if(doSearchDesign.trim()){
+    const q = doSearchDesign.trim().toLowerCase();
+    const namesWithDesign = new Set(
+      dispatchedAll.filter(b=>b.designNumber.toLowerCase().includes(q)).map(b=>b.customerName)
+    );
+    matchedCustomers = matchedCustomers.filter(n=>namesWithDesign.has(n));
+  }
+  if(doSearchCustomer.trim()){
+    const q = doSearchCustomer.trim().toLowerCase();
+    matchedCustomers = matchedCustomers.filter(n=>n.toLowerCase().includes(q));
+  }
+
+  const showResults = doSearchDesign.trim() || doSearchCustomer.trim();
+
+  let resultsHtml = '';
+  if(showResults && !matchedCustomers.length){
+    resultsHtml = `<div class="empty">No dispatched order found</div>`;
+  } else if(showResults){
+    resultsHtml = matchedCustomers.map(cname=>renderDispatchedCustomerCard(cname, dispatchedAll)).join('');
+  } else {
+    resultsHtml = `<div class="empty">Enter an article number or customer name to view their dispatched order</div>`;
+  }
+
+  main.innerHTML = `
+    <div class="card">
+      <h2>Search Dispatched Orders</h2>
+      <label>By Article Number</label>
+      <input id="doSearchDesign" list="designList" placeholder="Enter article number" value="${escapeHtml(doSearchDesign)}" oninput="onDoSearch('design', this.value)">
+      <label style="margin-top:10px;">By Customer Name</label>
+      <input id="doSearchCustomer" list="customerList" placeholder="Enter customer name" value="${escapeHtml(doSearchCustomer)}" oninput="onDoSearch('customer', this.value)">
+    </div>
+    ${resultsHtml}
+  `;
+}
+
+function renderDispatchedCustomerCard(cname, dispatchedAll){
+  const rows = dispatchedAll.filter(b=>b.customerName===cname)
+    .sort((a,b)=>(a.designNumber).localeCompare(b.designNumber));
+  const total = rows.reduce((s,b)=>s+b.qty,0);
+  const lines = rows.map(b=>
+    `<div class="item-line"><span>Design ${escapeHtml(b.designNumber)} · ${escapeHtml(b.size)}${b.brand?(' · '+escapeHtml(b.brand)):''}</span><span>${b.qty} Set</span></div>`
+  ).join('');
+
+  return `<div class="cust-card">
+    <div class="cust-head"><span class="name">${escapeHtml(cname)}</span><span class="set-pill done">${total} Sets</span></div>
+    ${lines}
+    <div class="order-total-line"><span>Total</span><span>${total} Sets</span></div>
+    <div class="action-row">
+      <button class="action-btn wa" onclick="shareWhatsApp('${cname.replace(/'/g,"\\'")}')">WhatsApp</button>
+      <button class="action-btn pr" onclick="printOrder('${cname.replace(/'/g,"\\'")}')">Print</button>
+      <button class="action-btn del" onclick="deleteOrder('${cname.replace(/'/g,"\\'")}')">Delete</button>
+    </div>
+  </div>`;
+}
+
+function onDoSearch(which, val){
+  if(which==='design') doSearchDesign = val; else doSearchCustomer = val;
+  render();
+  setTimeout(()=>{
+    const id = which==='design' ? 'doSearchDesign' : 'doSearchCustomer';
+    const el = document.getElementById(id);
+    if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+  }, 0);
+}
+
+function getCustomerOrderText(cname){
+  const rows = bookings.filter(b=>b.customerName===cname && b.status==='dispatched' && !b.trashed)
+    .sort((a,b)=>(a.designNumber).localeCompare(b.designNumber));
+  const total = rows.reduce((s,b)=>s+b.qty,0);
+  let text = `Order — ${cname}\n\n`;
+  rows.forEach(b=>{
+    text += `Design ${b.designNumber} · ${b.size}${b.brand?(' · '+b.brand):''} · ${b.qty} Set\n`;
+  });
+  text += `\nTotal: ${total} Sets`;
+  return text;
+}
+
+function shareWhatsApp(cname){
+  const text = getCustomerOrderText(cname);
+  window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+}
+
+function printOrder(cname){
+  const rows = bookings.filter(b=>b.customerName===cname && b.status==='dispatched' && !b.trashed)
+    .sort((a,b)=>(a.designNumber).localeCompare(b.designNumber));
+  const total = rows.reduce((s,b)=>s+b.qty,0);
+  const rowsHtml = rows.map(b=>`<tr><td>${escapeHtml(b.designNumber)}</td><td>${escapeHtml(b.size)}</td><td>${escapeHtml(b.brand||'-')}</td><td>${b.qty}</td></tr>`).join('');
+  const w = window.open('', '_blank');
+  if(!w) return;
+  w.document.write(`
+    <html><head><title>Order - ${escapeHtml(cname)}</title>
+    <style>
+      body{ font-family: Arial, sans-serif; padding:24px; color:#222; }
+      h1{ font-size:20px; margin-bottom:2px; }
+      table{ width:100%; border-collapse:collapse; margin-top:16px; }
+      th, td{ border:1px solid #999; padding:8px; text-align:left; font-size:14px; }
+      tfoot td{ font-weight:bold; }
+    </style>
+    </head><body>
+    <h1>Order — ${escapeHtml(cname)}</h1>
+    <div>Date: ${new Date().toLocaleDateString('en-IN')}</div>
+    <table>
+      <thead><tr><th>Design Number</th><th>Size</th><th>Brand</th><th>Set</th></tr></thead>
+      <tbody>${rowsHtml}</tbody>
+      <tfoot><tr><td colspan="3">Total</td><td>${total}</td></tr></tfoot>
+    </table>
+    </body></html>
+  `);
+  w.document.close();
+  w.focus();
+  w.print();
+}
+
+async function deleteOrder(cname){
+  let total = 0;
+  bookings.forEach(b=>{
+    if(b.customerName===cname && b.status==='dispatched' && !b.trashed){
+      b.trashed = true;
+      b.trashedAt = new Date().toISOString();
+      b.trashedBy = currentStaff ? { name: currentStaff.name, mobile: currentStaff.mobile } : null;
+      total += b.qty;
+    }
+  });
+  await saveData();
+  await logActivity('Order Deleted', `${cname} — ${total} sets`);
+  render();
+}
+
+async function restoreOrder(cname){
+  let total = 0;
+  bookings.forEach(b=>{
+    if(b.customerName===cname && b.trashed){
+      b.trashed = false;
+      b.trashedAt = null;
+      total += b.qty;
+    }
+  });
+  await saveData();
+  await logActivity('Order Restored', `${cname} — ${total} sets`);
+  render();
+}
+
+/* ---------------- PENDING ORDERS TAB ---------------- */
+
+function renderPendingOrders(main){
+  const pendingAll = bookings.filter(b=>b.status==='pending' && !b.trashed);
+
+  if(!pendingAll.length){
+    main.innerHTML = `<div class="card">
+      <h2>Search Party</h2>
+      <input id="pdSearchCustomer" placeholder="Enter customer name" value="${escapeHtml(pdSearchCustomer)}" oninput="onPdSearch(this.value)">
+    </div>
+    <div class="empty">No pending orders — everything has been dispatched</div>`;
+    return;
+  }
+
+  let customers = [...new Set(pendingAll.map(b=>b.customerName))];
+  if(pdSearchCustomer.trim()){
+    const q = pdSearchCustomer.trim().toLowerCase();
+    customers = customers.filter(n=>n.toLowerCase().includes(q));
+  }
+
+  const cards = customers.map(cname=>{
+    const rows = pendingAll.filter(b=>b.customerName===cname)
+      .sort((a,b)=>(a.designNumber).localeCompare(b.designNumber));
+    const total = rows.reduce((s,b)=>s+b.qty,0);
+    const lines = rows.map(b=>
+      `<div class="item-line"><span>Design ${escapeHtml(b.designNumber)} · ${escapeHtml(b.size)}${b.brand?(' · '+escapeHtml(b.brand)):''}</span><span>${b.qty} Set</span></div>`
+    ).join('');
+    return `<div class="cust-card">
+      <div class="cust-head"><span class="name">${escapeHtml(cname)}</span><span class="set-pill pending">${total} Pending</span></div>
+      ${lines}
+    </div>`;
+  }).join('');
+
+  main.innerHTML = `
+    <div class="card">
+      <h2>Search Party</h2>
+      <input id="pdSearchCustomer" placeholder="Enter customer name" value="${escapeHtml(pdSearchCustomer)}" oninput="onPdSearch(this.value)">
+    </div>
+    ${cards || '<div class="empty">No customer found</div>'}
+  `;
+}
+
+function onPdSearch(val){
+  pdSearchCustomer = val;
+  render();
+  setTimeout(()=>{
+    const el = document.getElementById('pdSearchCustomer');
+    if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+  }, 0);
+}
+
+/* ---------------- CUSTOMER-WISE TAB ---------------- */
+
+function getCustomerFullOrderText(cname){
+  const rows = bookings.filter(b=>b.customerName===cname && !b.trashed)
+    .sort((a,b)=>(a.designNumber).localeCompare(b.designNumber));
+  const total = rows.reduce((s,b)=>s+b.qty,0);
+  let text = `Order — ${cname}\n\n`;
+  rows.forEach(b=>{
+    const statusLabel = b.status==='dispatched' ? 'Dispatched' : 'Pending';
+    text += `Design ${b.designNumber} · ${b.size}${b.brand?(' · '+b.brand):''} · ${b.qty} Set (${statusLabel})\n`;
+  });
+  text += `\nTotal: ${total} Sets`;
+  return text;
+}
+
+function shareWhatsAppCustomer(cname){
+  const text = getCustomerFullOrderText(cname);
+  window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+}
+
+function printCustomerOrder(cname){
+  const rows = bookings.filter(b=>b.customerName===cname && !b.trashed)
+    .sort((a,b)=>(a.designNumber).localeCompare(b.designNumber));
+  const total = rows.reduce((s,b)=>s+b.qty,0);
+  const rowsHtml = rows.map(b=>`<tr><td>${escapeHtml(b.designNumber)}</td><td>${escapeHtml(b.size)}</td><td>${escapeHtml(b.brand||'-')}</td><td>${b.qty}</td><td>${b.status==='dispatched'?'Dispatched':'Pending'}</td></tr>`).join('');
+  const w = window.open('', '_blank');
+  if(!w) return;
+  w.document.write(`
+    <html><head><title>Order - ${escapeHtml(cname)}</title>
+    <style>
+      body{ font-family: Arial, sans-serif; padding:24px; color:#222; }
+      h1{ font-size:20px; margin-bottom:2px; }
+      table{ width:100%; border-collapse:collapse; margin-top:16px; }
+      th, td{ border:1px solid #999; padding:8px; text-align:left; font-size:14px; }
+      tfoot td{ font-weight:bold; }
+    </style>
+    </head><body>
+    <h1>Order — ${escapeHtml(cname)}</h1>
+    <div>Date: ${new Date().toLocaleDateString('en-IN')}</div>
+    <table>
+      <thead><tr><th>Design Number</th><th>Size</th><th>Brand</th><th>Set</th><th>Status</th></tr></thead>
+      <tbody>${rowsHtml}</tbody>
+      <tfoot><tr><td colspan="3">Total</td><td colspan="2">${total}</td></tr></tfoot>
+    </table>
+    </body></html>
+  `);
+  w.document.close();
+  w.focus();
+  w.print();
+}
+
+async function deleteCustomerOrderFull(cname){
+  let total = 0;
+  bookings.forEach(b=>{
+    if(b.customerName===cname && !b.trashed){
+      b.trashed = true;
+      b.trashedAt = new Date().toISOString();
+      b.trashedBy = currentStaff ? { name: currentStaff.name, mobile: currentStaff.mobile } : null;
+      total += b.qty;
+    }
+  });
+  await saveData();
+  await logActivity('Order Deleted', `${cname} — full order deleted, ${total} sets`);
+  render();
+}
+
+function renderCustomers(main){
+  const activeBookings = bookings.filter(b=>!b.trashed);
+  let customers = [...new Set(activeBookings.map(b=>b.customerName))]
+    .filter(c=>c.toLowerCase().includes(customerFilter.trim().toLowerCase()));
+
+  if(customerBrandFilter.trim()){
+    const bq = customerBrandFilter.trim().toLowerCase();
+    const namesWithBrand = new Set(
+      activeBookings.filter(b=>(b.brand||'').toLowerCase().includes(bq)).map(b=>b.customerName)
+    );
+    customers = customers.filter(c=>namesWithBrand.has(c));
+  }
+
+  if(!activeBookings.length){
+    main.innerHTML = `<div class="card"><div class="empty">No order recorded yet</div></div>`;
+    return;
+  }
+
+  const cards = customers.map(cname=>{
+    const rows = activeBookings.filter(b=>b.customerName===cname);
+    const total = rows.reduce((s,b)=>s+b.qty,0);
+    const done = rows.filter(b=>b.status==='dispatched').reduce((s,b)=>s+b.qty,0);
+    const pending = total - done;
+    const isOpen = expandedCustomer === cname;
+
+    let detail = '';
+    if(isOpen){
+      const dispatchedRows = rows.filter(b=>b.status==='dispatched');
+      const pendingRows = rows.filter(b=>b.status==='pending');
+      detail = `<div class="cust-detail">
+        ${dispatchedRows.length ? `<div class="section-label">Ready Goods (Dispatched)</div>` + dispatchedRows.map(b=>`
+          <div class="li"><span>Design ${escapeHtml(b.designNumber)} · ${escapeHtml(b.size)}${b.brand?(' · '+escapeHtml(b.brand)):''} · ${b.qty}</span>
+          <button class="undo-link" onclick="undoDispatch('${b.id}')">Undo</button></div>
+        `).join('') : ''}
+        ${pendingRows.length ? `<div class="section-label">Pending Order</div>` + pendingRows.map(b=>`
+          <div class="li"><span>Design ${escapeHtml(b.designNumber)} · ${escapeHtml(b.size)}${b.brand?(' · '+escapeHtml(b.brand)):''} · ${b.qty}</span><span style="color:var(--rust);">Pending</span></div>
+        `).join('') : ''}
+      </div>`;
+    }
+
+    return `<div class="cust-card" onclick="toggleCustomer('${cname.replace(/'/g,"\\'")}')" style="cursor:pointer;">
+      <div class="cust-head"><span class="name">${escapeHtml(cname)}</span>
+        <span class="set-pill ${pending>0?'pending':'done'}">${pending>0 ? pending+' Pending' : 'Complete'}</span>
+      </div>
+      <div class="summary-row">
+        <span>Total: ${total}</span>
+        <span>Dispatched: ${done}</span>
+        <span>Pending: ${pending}</span>
+      </div>
+      <div class="action-row" onclick="event.stopPropagation();">
+        <button class="action-btn wa" onclick="shareWhatsAppCustomer('${cname.replace(/'/g,"\\'")}')">WhatsApp</button>
+        <button class="action-btn pr" onclick="printCustomerOrder('${cname.replace(/'/g,"\\'")}')">Print</button>
+        <button class="action-btn del" onclick="deleteCustomerOrderFull('${cname.replace(/'/g,"\\'")}')">Delete</button>
+      </div>
+      ${detail}
+    </div>`;
+  }).join('');
+
+  main.innerHTML = `
+    <div class="card filter-input" style="margin-bottom:14px;">
+      <label>Search Customer</label>
+      <input id="custFilter" placeholder="Type name" value="${escapeHtml(customerFilter)}" oninput="onCustomerFilter(this.value)">
+      <label style="margin-top:10px;">Search by Brand</label>
+      <input id="custBrandFilter" list="brandList" placeholder="Type brand name" value="${escapeHtml(customerBrandFilter)}" oninput="onCustomerBrandFilter(this.value)">
+    </div>
+    ${cards || '<div class="empty">No customer found</div>'}
+  `;
+}
+
+function onCustomerFilter(val){
+  customerFilter = val;
+  render();
+  setTimeout(()=>{
+    const el = document.getElementById('custFilter');
+    if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+  }, 0);
+}
+
+function onCustomerBrandFilter(val){
+  customerBrandFilter = val;
+  render();
+  setTimeout(()=>{
+    const el = document.getElementById('custBrandFilter');
+    if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+  }, 0);
+}
+
+function toggleCustomer(cname){
+  expandedCustomer = expandedCustomer === cname ? null : cname;
+  render();
+}
+
+async function undoDispatch(bookingId){
+  event.stopPropagation();
+  const b = bookings.find(x=>x.id===bookingId);
+  if(!b) return;
+  b.status = 'pending';
+  b.dispatchedAt = null;
+  await saveData();
+  await logActivity('Dispatch Undone', `${b.customerName} — Design ${b.designNumber}, ${b.size} × ${b.qty}`);
+  render();
+}
+
+/* ---------------- DELETED ORDERS TAB ---------------- */
+
+function renderDeletedOrders(main){
+  const trashedAll = bookings.filter(b=>b.trashed);
+  const trashedCustomers = [...new Set(trashedAll.map(b=>b.customerName))];
+
+  if(!trashedCustomers.length){
+    main.innerHTML = `<div class="card"><div class="empty">No deleted orders</div></div>`;
+    return;
+  }
+
+  const cards = trashedCustomers.map(cname=>{
+    const rows = trashedAll.filter(b=>b.customerName===cname)
+      .sort((a,b)=>(a.designNumber).localeCompare(b.designNumber));
+    const total = rows.reduce((s,b)=>s+b.qty,0);
+    const lines = rows.map(b=>
+      `<div class="item-line"><span>Design ${escapeHtml(b.designNumber)} · ${escapeHtml(b.size)}${b.brand?(' · '+escapeHtml(b.brand)):''}</span><span>${b.qty} Set (${b.status==='dispatched'?'Dispatched':'Pending'})</span></div>`
+    ).join('');
+    return `<div class="trash-card">
+      <div class="trash-head">
+        <span><b>${escapeHtml(cname)}</b> <span class="subtle">(${total} sets deleted)</span></span>
+        <button class="restore-btn" onclick="restoreOrder('${cname.replace(/'/g,"\\'")}')">Restore</button>
+      </div>
+      ${lines}
+    </div>`;
+  }).join('');
+
+  main.innerHTML = `<div class="card"><h2>Deleted Orders (${trashedCustomers.length})</h2></div>${cards}`;
+}
+
+/* ---------------- ACTIVITY LOG TAB ---------------- */
+
+function renderActivity(main){
+  if(!activityLog.length){
+    main.innerHTML = `<div class="card"><div class="empty">No activity recorded yet</div></div>`;
+    return;
+  }
+  const items = activityLog.map(a=>`
+    <div class="log-card">
+      <div class="log-top">
+        <span class="log-staff">${escapeHtml(a.staffName)} <span class="subtle">(${escapeHtml(a.staffMobile)})</span></span>
+        <span class="log-time">${fmtTime(a.timestamp)}</span>
+      </div>
+      <div class="log-action">${escapeHtml(a.action)}</div>
+      <div class="log-detail">${escapeHtml(a.detail)}</div>
+    </div>
+  `).join('');
+  main.innerHTML = `<div class="card"><h2>Staff Activity (${activityLog.length})</h2></div>${items}`;
+}
+
+loadData();
+</script>
+</body>
+</html>
