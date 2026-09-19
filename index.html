@@ -4,8 +4,22 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>Subhash Sales Agencies — Order & Dispatch</title>
+
+<!-- Makes this installable as a real app icon on phone/PC, not just a browser tab -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#1656A6">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="SSA Orders">
+<meta name="mobile-web-app-capable" content="yes">
+
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <style>
   :root{
     --navy:#1656A6;
@@ -298,13 +312,58 @@
     color:var(--navy);
   }
   .login-card p{ font-size:13.5px; color:#5b6472; margin:0 0 18px 0; }
+  .login-divider{ text-align:center; color:#9aa4b2; font-size:12px; margin:14px 0; }
+  #googleSignInBtn{ display:flex; justify-content:center; margin:10px 0; }
+
+  .cust-card.all-done{ opacity:.55; background:#EEF2F8; }
+  .cust-card.all-done .name{ color:#a3aec0; }
+
+  .colour-label{
+    font-size:12.5px; font-weight:700; color:var(--navy); text-transform:uppercase;
+    letter-spacing:.3px; margin:10px 0 5px 0;
+  }
+  .colour-label:first-child{ margin-top:2px; }
+  .size-suggest-dropdown{
+    position:absolute; top:100%; left:0; right:0; z-index:30;
+    background:#fff; border:1px solid var(--line); border-radius:8px;
+    margin-top:4px; max-height:230px; overflow-y:auto;
+    box-shadow:0 6px 18px rgba(0,0,0,.15);
+  }
+  .size-suggest-item{
+    padding:11px 14px; font-size:14.5px; font-weight:600; color:var(--ink);
+    border-bottom:1px solid var(--linen);
+  }
+  .size-suggest-item:last-child{ border-bottom:none; }
+  .size-suggest-item:active{ background:var(--navy); color:#fff; }
+
+  .date-section-label{
+    font-family:'Fraunces',serif; font-weight:700; font-size:15px;
+    color:var(--navy); margin:18px 0 8px 2px; padding-bottom:4px;
+    border-bottom:2px solid var(--line);
+  }
+  .date-section-label:first-child{ margin-top:0; }
+
+  .lang-toggle{
+    background:rgba(255,255,255,.15); color:#fff; border:1px solid rgba(255,255,255,.35);
+    border-radius:20px; padding:6px 12px; font-size:12.5px; font-weight:700;
+  }
+  .lang-toggle:active{ background:rgba(255,255,255,.3); }
+
+  .trash-actions{ display:flex; gap:8px; }
+  .perm-del-btn{
+    background:#fff; color:var(--rust); border:1.5px solid var(--rust);
+    border-radius:8px; padding:8px 12px; font-size:12.5px; font-weight:700;
+  }
 </style>
 </head>
 <body>
 
 <div class="topbar">
   <h1>Subhash Sales Agencies</h1>
-  <div class="topbar-right" id="topbarRight"></div>
+  <div class="topbar-right">
+    <button class="lang-toggle" id="langToggleBtn" onclick="toggleLang()">हिं</button>
+    <span id="topbarRight"></span>
+  </div>
 </div>
 
 <main id="main"></main>
@@ -317,6 +376,7 @@
   <button class="navbtn" data-tab="customers"><span class="ic">👤</span>Customers</button>
   <button class="navbtn" data-tab="deletedOrders"><span class="ic">🗑️</span>Deleted</button>
   <button class="navbtn" data-tab="activity"><span class="ic">📋</span>Activity</button>
+  <button class="navbtn" data-tab="approvals" id="approvalsNavBtn" style="display:none;"><span class="ic">✅</span>Approvals</button>
 </div>
 
 <datalist id="customerList"></datalist>
@@ -333,24 +393,63 @@ let currentStaff = null; // {name, mobile} - session only, not persisted across 
 // in-memory draft for current booking session
 let draftCustomer = '';
 let draftBrand = '';
-let draftCart = [];          // [{designNumber, sizes:[{size, qty}]}]
+let draftCart = [];          // [{designNumber, colour, sizes:[{size, qty}]}]
 let tempDesignNumber = '';
+let tempColour = '';
 let tempSizes = [];          // [{size, qty}]
 
+// Preset sizes shown in a tap-to-filter dropdown in Add Design. Staff can also
+// type any other size manually — this list is just for quick selection.
+const SIZE_PRESETS = ['20/24','26/30','32/36','18/22','24/28','30/34','9/24','2/5','6/8','9/14','15/16','22/26','28/32','34/38'];
+
 let dispatchQuery = '';
+let dispatchBrandQuery = '';
+let dispatchFromDate = ''; // yyyy-mm-dd
+let dispatchToDate = '';   // yyyy-mm-dd
+let selectedDesign = null;   // exact design chosen from the "select one" list, so it's never re-matched against other designs that merely share the same digits
 let customerFilter = '';
 let customerBrandFilter = '';
+let customerDateFilter = ''; // yyyy-mm-dd
 let expandedCustomer = null;
 
 // dispatched-orders tab search state
 let doSearchDesign = '';
-let doSearchCustomer = '';
+let doSearchBrand = '';
+let doSearchDate = '';       // yyyy-mm-dd
 
 // pending-orders tab search state
 let pdSearchCustomer = '';
+let pdSearchBrand = '';
+let pdSearchDate = ''; // yyyy-mm-dd
+
+// activity tab filter state
+let activityDateFilter = ''; // yyyy-mm-dd
 
 const SHEET_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwR28myzk020v3-yd25OrjHCKb4ujzoxXyURe7GAcrt5cpSUZ7-_BAQ39t_NiZcJMc3yw/exec';
 const cloudAvailable = !!(SHEET_SCRIPT_URL && SHEET_SCRIPT_URL.startsWith('http'));
+
+// Replace this with your own Google OAuth Client ID (see setup notes sent in chat).
+// Until you do, the login screen falls back to a simple name-only entry.
+const GOOGLE_CLIENT_ID = 'YOUR_GOOGLE_CLIENT_ID_HERE.apps.googleusercontent.com';
+const googleReady = !!(GOOGLE_CLIENT_ID && !GOOGLE_CLIENT_ID.includes('YOUR_GOOGLE_CLIENT_ID'));
+
+// Only this Google account gets automatic access + the Approvals tab. Everyone
+// else who signs in with Google must be approved from that tab first.
+const OWNER_EMAIL = 'subhashsalesagencies@gmail.com';
+let staffApprovals = []; // [{name, email, status:'pending'|'approved'|'rejected', requestedAt, approvedAt, canDelete}]
+let loginWaitingEmail = null; // set while showing the "waiting for approval" screen
+
+// The owner always has full access. A staff member who logged in via the
+// name-only fallback (no Google account, no email) predates the approval
+// system and is treated as unrestricted too. Everyone else needs the owner
+// to have explicitly switched on delete rights for their account.
+function canCurrentUserDelete(){
+  if(!currentStaff) return false;
+  if(!currentStaff.mobile) return true;
+  if(currentStaff.mobile.toLowerCase() === OWNER_EMAIL.toLowerCase()) return true;
+  const entry = staffApprovals.find(s=>s.email === currentStaff.mobile);
+  return !!(entry && entry.canDelete);
+}
 
 function uid(){ return 'b' + Math.random().toString(36).slice(2,10); }
 function escapeHtml(str){
@@ -359,6 +458,268 @@ function escapeHtml(str){
 function fmtTime(iso){
   const d = new Date(iso);
   return d.toLocaleString('en-IN', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' });
+}
+
+/* ---------------- LANGUAGE / TRANSLATIONS ---------------- */
+
+let currentLang = 'en';
+try{ currentLang = localStorage.getItem('ssa_lang') || 'en'; }catch(e){}
+
+const I18N = {
+  en: {
+    app_title:'Subhash Sales Agencies',
+    nav_order:'Order', nav_article:'Article', nav_dispatched:'Dispatched', nav_pending:'Pending',
+    nav_customers:'Customers', nav_deleted:'Deleted', nav_activity:'Activity', nav_approvals:'Approvals',
+    pending_sets:'Pending', sets:'Sets', set:'Set', switch_btn:'Switch',
+
+    login_title:'Staff Login',
+    login_sub_google:'Enter your name, then sign in with your Google account. A new sign-in needs one-time approval from the owner before you can use the app.',
+    login_sub_manual:'Enter your name to continue. This is used to identify who did what in the app.',
+    login_cloud_warning:"Google Sheets backend URL is not set up yet. Data will only be saved on this phone and won't be visible to other staff.",
+    your_name:'Your Name', name_ph:'e.g. Ramesh', then_word:'then', continue_btn:'Continue',
+    enter_name_err:'Please enter your name',
+    waiting_title:'Waiting for Approval', rejected_title:'Access Not Granted',
+    waiting_msg1:'A request has been sent to', waiting_msg2:'Once Sandeep approves it from the Approvals tab, tap "Check Again" below to get in.',
+    rejected_msg:'Your access request was not approved. Please speak to Sandeep directly if you think this is a mistake.',
+    check_again:'Check Again', use_diff_account:'Use a Different Account',
+
+    pending_requests:'Pending Requests', approved_staff:'Approved Staff', rejected_heading:'Rejected',
+    no_pending_requests:'No pending requests', no_approved_staff:'No approved staff yet',
+    requested:'requested', approve:'Approve', reject:'Reject', approve_anyway:'Approve Anyway',
+    revoke_access:'Revoke Access', badge_pending:'Pending', badge_approved:'Approved', badge_rejected:'Rejected',
+    reject_confirm:'Reject access for', revoke_confirm:'Revoke app access for', revoke_confirm2:'They will need to be re-approved to log in again.',
+    perm_delete_confirm:"Permanently delete this trashed order? This cannot be undone.",
+    delete_allowed:'Can Delete Orders', delete_blocked:'Delete Blocked', allow_delete:'Allow Delete', block_delete:'Block Delete',
+    delete_not_allowed:"You don't have permission to delete orders. Ask the owner to grant it from the Approvals tab.",
+
+    customer_name:'Customer Name', enter_customer_name:'Enter customer name',
+    brand_name:'Brand Name', enter_brand_name:'Enter brand name',
+    add_design:'Add Design', design_number:'Design Number', design_ph:'e.g. 2145',
+    colour_optional:'Colour (optional)', colour_ph:'e.g. Navy Purple',
+    size:'Size', size_ph:'Tap to choose or type a size', no_size_added:'No size added yet',
+    add_design_btn:'Add This Design to Order', designs_in_order:'Designs in This Order',
+    no_design_added:'No design added yet', save_order:'Save Order', remove:'Remove',
+    enter_design_err:'Please enter design number', add_size_err:'Add at least one size',
+    size_qty_err:'Please enter size and set correctly', designs_saved:'designs saved to order',
+    enter_customer_err:'Please enter customer name',
+    enter_brand_err:'Please enter brand name',
+
+    search_by_article:'Search by Article Number', article_ph:'Enter full or partial article number',
+    matching_articles:'Matching Articles — Select One', no_article_found:'No order found for this article number',
+    article:'Article', colours_ordered:'Colours ordered', brands_ordered:'Brands ordered',
+    closing_set:'Closing Set', dispatched:'Dispatched',
+    change:'Change', fully_dispatched:'Fully Dispatched', no_colour:'No Colour',
+    no_colour_brand:'No Colour / Brand', optional_word:'optional', brand_ph_optional:'e.g. Hello Kids (leave blank to search all brands)',
+
+    search_dispatched:'Search Dispatched Orders', by_article_number:'By Article Number',
+    by_brand_name:'By Brand Name', by_date:'By Date', no_dispatched_orders:'No dispatched orders',
+    no_dispatched_match:'match your search', no_dispatched_yet:'yet', total:'Total',
+    whatsapp:'WhatsApp', print:'Print', delete_btn:'Delete', undo:'Undo',
+    from_date:'From Date', to_date:'To Date', brand_overview:'Brand Overview', articles_word:'articles',
+    no_brand_orders:'No orders found for this brand.',
+
+    search_customer:'Search Customer', type_name:'Type name', search_by_brand:'Search by Brand',
+    type_brand_name:'Type brand name', no_customer_found:'No customer found', no_order_yet:'No order recorded yet',
+    complete:'Complete', ready_goods:'Ready Goods (Dispatched)', pending_order:'Pending Order',
+
+    deleted_orders:'Deleted Orders', no_deleted_orders:'No deleted orders', sets_deleted:'sets deleted',
+    restore:'Restore', delete_permanently:'Delete Permanently',
+
+    staff_activity:'Staff Activity', share_whatsapp_pdf:'Share via WhatsApp (PDF)',
+    no_activity:'No activity recorded', on_this_date:'on this date', yet_word:'yet',
+    no_activity_share:'No activity to share',
+
+    pending_orders:'Pending Orders', search_party:'Search Party', no_pending_orders:'No pending orders — everything has been dispatched',
+    delete_all_brand:'Delete All Orders for Brand', delete_confirm_1:'Delete this pending order for',
+    no_pending_for_brand:'No pending orders found for this brand.',
+    bulk_confirm_1:'This will delete ALL pending orders for brand', bulk_confirm_customers:'customer(s)',
+    bulk_confirm_continue:'Continue?',
+    bulk_confirm_2:"Are you sure? You will need to Restore each one individually from the Deleted tab if you change your mind. Continue?",
+    bulk_confirm_3:'FINAL CONFIRMATION — this cannot be undone easily. Delete',
+
+    design_word:'Design', pdf_gen_fail:'Could not generate the PDF. Please check your internet connection and try again.',
+    loading_word:'Loading...',
+    lang_toggle:'हिं',
+  },
+  hi: {
+    app_title:'सुभाष सेल्स एजेंसीज',
+    nav_order:'ऑर्डर', nav_article:'आर्टिकल', nav_dispatched:'डिस्पैच', nav_pending:'पेंडिंग',
+    nav_customers:'ग्राहक', nav_deleted:'डिलीटेड', nav_activity:'एक्टिविटी', nav_approvals:'अप्रूवल्स',
+    pending_sets:'पेंडिंग', sets:'सेट', set:'सेट', switch_btn:'स्विच',
+
+    login_title:'स्टाफ लॉगिन',
+    login_sub_google:'पहले अपना नाम लिखें, फिर अपने Google अकाउंट से साइन इन करें। नए साइन-इन को इस्तेमाल करने से पहले मालिक की एक बार मंज़ूरी लेनी होगी।',
+    login_sub_manual:'आगे बढ़ने के लिए अपना नाम लिखें। इससे पता चलेगा कि ऐप में किसने क्या किया।',
+    login_cloud_warning:'Google Sheets बैकएंड अभी सेट नहीं हुआ है। डेटा सिर्फ इसी फोन में सेव होगा, बाकी स्टाफ को नहीं दिखेगा।',
+    your_name:'आपका नाम', name_ph:'जैसे रमेश', then_word:'फिर', continue_btn:'आगे बढ़ें',
+    enter_name_err:'कृपया अपना नाम लिखें',
+    waiting_title:'मंज़ूरी का इंतज़ार', rejected_title:'एक्सेस नहीं मिला',
+    waiting_msg1:'एक रिक्वेस्ट भेज दी गई है', waiting_msg2:'जब सैंडीप Approvals टैब से मंज़ूरी दे देंगे, तब नीचे "Check Again" दबाकर लॉगिन कर सकते हैं।',
+    rejected_msg:'आपकी एक्सेस रिक्वेस्ट मंज़ूर नहीं की गई। अगर ये गलती लगती है तो सैंडीप से सीधे बात करें।',
+    check_again:'दोबारा जांचें', use_diff_account:'दूसरा अकाउंट इस्तेमाल करें',
+
+    pending_requests:'पेंडिंग रिक्वेस्ट्स', approved_staff:'अप्रूव्ड स्टाफ', rejected_heading:'रिजेक्टेड',
+    no_pending_requests:'कोई पेंडिंग रिक्वेस्ट नहीं', no_approved_staff:'अभी तक कोई स्टाफ अप्रूव नहीं हुआ',
+    requested:'रिक्वेस्ट की गई', approve:'अप्रूव करें', reject:'रिजेक्ट करें', approve_anyway:'फिर भी अप्रूव करें',
+    revoke_access:'एक्सेस हटाएं', badge_pending:'पेंडिंग', badge_approved:'अप्रूव्ड', badge_rejected:'रिजेक्टेड',
+    reject_confirm:'इसकी एक्सेस रिजेक्ट करें —', revoke_confirm:'इसकी ऐप एक्सेस हटाएं —', revoke_confirm2:'दोबारा लॉगिन करने के लिए फिर से मंज़ूरी लेनी होगी।',
+    perm_delete_confirm:'इस डिलीट किए गए ऑर्डर को हमेशा के लिए हटाएं? यह वापस नहीं होगा।',
+    delete_allowed:'ऑर्डर डिलीट कर सकते हैं', delete_blocked:'डिलीट बंद है', allow_delete:'डिलीट की इजाज़त दें', block_delete:'डिलीट रोकें',
+    delete_not_allowed:'आपको ऑर्डर डिलीट करने की इजाज़त नहीं है। मालिक से Approvals टैब से इजाज़त लेने को कहें।',
+
+    customer_name:'ग्राहक का नाम', enter_customer_name:'ग्राहक का नाम लिखें',
+    brand_name:'ब्रांड का नाम', enter_brand_name:'ब्रांड का नाम लिखें',
+    add_design:'डिज़ाइन जोड़ें', design_number:'डिज़ाइन नंबर', design_ph:'जैसे 2145',
+    colour_optional:'कलर (वैकल्पिक)', colour_ph:'जैसे नेवी पर्पल',
+    size:'साइज़', size_ph:'चुनने के लिए टैप करें या साइज़ लिखें', no_size_added:'अभी कोई साइज़ नहीं जोड़ा गया',
+    add_design_btn:'यह डिज़ाइन ऑर्डर में जोड़ें', designs_in_order:'इस ऑर्डर में डिज़ाइन',
+    no_design_added:'अभी कोई डिज़ाइन नहीं जोड़ा गया', save_order:'ऑर्डर सेव करें', remove:'हटाएं',
+    enter_design_err:'कृपया डिज़ाइन नंबर लिखें', add_size_err:'कम से कम एक साइज़ जोड़ें',
+    size_qty_err:'कृपया साइज़ और सेट सही लिखें', designs_saved:'डिज़ाइन ऑर्डर में सेव हो गए',
+    enter_customer_err:'कृपया ग्राहक का नाम लिखें',
+    enter_brand_err:'कृपया ब्रांड का नाम लिखें',
+
+    search_by_article:'आर्टिकल नंबर से खोजें', article_ph:'पूरा या आधा आर्टिकल नंबर लिखें',
+    matching_articles:'मिलते-जुलते आर्टिकल — एक चुनें', no_article_found:'इस आर्टिकल नंबर का कोई ऑर्डर नहीं मिला',
+    article:'आर्टिकल', colours_ordered:'ऑर्डर किए गए कलर', brands_ordered:'ऑर्डर किए गए ब्रांड',
+    closing_set:'क्लोज़िंग सेट', dispatched:'डिस्पैच हुआ',
+    change:'बदलें', fully_dispatched:'पूरी तरह डिस्पैच', no_colour:'कोई कलर नहीं',
+    no_colour_brand:'कोई कलर / ब्रांड नहीं', optional_word:'वैकल्पिक', brand_ph_optional:'जैसे Hello Kids (सभी ब्रांड देखने के लिए खाली छोड़ें)',
+
+    search_dispatched:'डिस्पैच ऑर्डर खोजें', by_article_number:'आर्टिकल नंबर से',
+    by_brand_name:'ब्रांड नाम से', by_date:'तारीख से', no_dispatched_orders:'कोई डिस्पैच ऑर्डर नहीं मिला',
+    no_dispatched_match:'आपकी खोज से मेल नहीं खाता', no_dispatched_yet:'अभी तक', total:'कुल',
+    whatsapp:'व्हाट्सएप', print:'प्रिंट', delete_btn:'डिलीट', undo:'वापस करें',
+    from_date:'शुरू तारीख', to_date:'आखिरी तारीख', brand_overview:'ब्रांड की पूरी सूची', articles_word:'आर्टिकल',
+    no_brand_orders:'इस ब्रांड का कोई ऑर्डर नहीं मिला।',
+
+    search_customer:'ग्राहक खोजें', type_name:'नाम लिखें', search_by_brand:'ब्रांड से खोजें',
+    type_brand_name:'ब्रांड का नाम लिखें', no_customer_found:'कोई ग्राहक नहीं मिला', no_order_yet:'अभी तक कोई ऑर्डर दर्ज नहीं हुआ',
+    complete:'पूरा हुआ', ready_goods:'तैयार माल (डिस्पैच हुआ)', pending_order:'पेंडिंग ऑर्डर',
+
+    deleted_orders:'डिलीट किए गए ऑर्डर', no_deleted_orders:'कोई डिलीट ऑर्डर नहीं', sets_deleted:'सेट डिलीट किए गए',
+    restore:'वापस लाएं', delete_permanently:'हमेशा के लिए डिलीट करें',
+
+    staff_activity:'स्टाफ एक्टिविटी', share_whatsapp_pdf:'व्हाट्सएप पर PDF भेजें',
+    no_activity:'कोई एक्टिविटी दर्ज नहीं हुई', on_this_date:'इस तारीख को', yet_word:'अभी तक',
+    no_activity_share:'शेयर करने के लिए कोई एक्टिविटी नहीं',
+
+    pending_orders:'पेंडिंग ऑर्डर', search_party:'पार्टी खोजें', no_pending_orders:'कोई पेंडिंग ऑर्डर नहीं — सब डिस्पैच हो चुका है',
+    delete_all_brand:'इस ब्रांड के सभी ऑर्डर डिलीट करें', delete_confirm_1:'इस पेंडिंग ऑर्डर को डिलीट करें —',
+    no_pending_for_brand:'इस ब्रांड का कोई पेंडिंग ऑर्डर नहीं मिला।',
+    bulk_confirm_1:'इससे इस ब्रांड के सभी पेंडिंग ऑर्डर डिलीट हो जाएंगे —', bulk_confirm_customers:'ग्राहक',
+    bulk_confirm_continue:'आगे बढ़ें?',
+    bulk_confirm_2:'पक्का? मन बदलने पर हर एक को Deleted टैब से अलग-अलग वापस लाना (Restore) पड़ेगा। आगे बढ़ें?',
+    bulk_confirm_3:'आखिरी पुष्टि — यह आसानी से वापस नहीं होगा। डिलीट करें',
+
+    design_word:'डिज़ाइन', pdf_gen_fail:'PDF नहीं बन पाई। इंटरनेट चेक करके दोबारा कोशिश करें।',
+    loading_word:'लोड हो रहा है...',
+    lang_toggle:'EN',
+  }
+};
+
+function t(key){
+  return (I18N[currentLang] && I18N[currentLang][key]) || I18N.en[key] || key;
+}
+
+function toggleLang(){
+  currentLang = currentLang === 'hi' ? 'en' : 'hi';
+  try{ localStorage.setItem('ssa_lang', currentLang); }catch(e){}
+  applyStaticLanguage();
+  render();
+}
+
+// Text that lives outside main (nav bar, page title) is only re-applied here,
+// since it isn't rebuilt on every render() the way tab content is.
+function applyStaticLanguage(){
+  document.title = t('app_title') + ' — Order & Dispatch';
+  const h1 = document.querySelector('.topbar h1');
+  if(h1) h1.textContent = t('app_title');
+  const langBtn = document.getElementById('langToggleBtn');
+  if(langBtn) langBtn.textContent = t('lang_toggle');
+  const navMap = { book:'nav_order', dispatch:'nav_article', dispatchedOrders:'nav_dispatched',
+    pendingOrders:'nav_pending', customers:'nav_customers', deletedOrders:'nav_deleted',
+    activity:'nav_activity', approvals:'nav_approvals' };
+  document.querySelectorAll('.navbtn').forEach(btn=>{
+    const key = navMap[btn.dataset.tab];
+    if(!key) return;
+    const ic = btn.querySelector('.ic');
+    btn.innerHTML = '';
+    if(ic) btn.appendChild(ic);
+    btn.appendChild(document.createTextNode(t(key)));
+  });
+}
+
+/* ---------------- PDF GENERATION & SHARING ----------------
+   Print buttons and WhatsApp buttons throughout the app both hand off to
+   these helpers, so every "Print" opens a real PDF and every "WhatsApp"
+   share sends that same PDF as a file (via the phone's native share sheet)
+   instead of a plain text message. */
+
+function buildPdfBlob(title, subtitle, columns, rows, footerText){
+  if(!window.jspdf || !window.jspdf.jsPDF) return null;
+  try{
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+    doc.setFontSize(14);
+    doc.text(title, 14, 16);
+    doc.setFontSize(10);
+    doc.setTextColor(90,100,115);
+    doc.text(subtitle, 14, 23);
+    doc.setTextColor(20,20,20);
+    doc.autoTable({
+      startY: 28,
+      head: [columns],
+      body: rows,
+      styles: { fontSize: 9, cellPadding: 3 },
+      headStyles: { fillColor: [22,86,166], textColor: [255,255,255] },
+      theme: 'grid'
+    });
+    if(footerText){
+      const finalY = (doc.lastAutoTable && doc.lastAutoTable.finalY) || 28;
+      doc.setFontSize(11);
+      doc.setTextColor(20,20,20);
+      doc.text(footerText, 14, finalY + 10);
+    }
+    return doc.output('blob');
+  }catch(e){ console.error('PDF build failed', e); return null; }
+}
+
+function openPdfBlob(blob, filename){
+  const url = URL.createObjectURL(blob);
+  const w = window.open(url, '_blank');
+  if(!w){
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+  }
+  setTimeout(()=>URL.revokeObjectURL(url), 60000);
+}
+
+async function sharePdfBlob(blob, filename, shareTitle, shareText){
+  try{
+    const file = new File([blob], filename, { type: 'application/pdf' });
+    if(navigator.canShare && navigator.canShare({ files: [file] })){
+      // Important: don't pass "text" alongside "files" here. On Android,
+      // sharing a file + text together to WhatsApp's direct-share contact
+      // shortcut makes WhatsApp misread it as an empty text message and
+      // refuse to send ("Can't send empty message"), even though a file is
+      // attached. Sharing the file alone (with just a title) avoids that.
+      await navigator.share({ files: [file], title: shareTitle });
+      return;
+    }
+  }catch(e){
+    if(e && e.name === 'AbortError') return; // user cancelled the share sheet
+    console.error('Native share failed, falling back to download', e);
+  }
+  // Fallback for browsers without file-sharing support (mostly desktop):
+  // download the PDF, then open WhatsApp so it can be attached manually.
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url), 60000);
+  window.open(`https://wa.me/?text=${encodeURIComponent(shareText + '\n\n(PDF has been downloaded to your device — please attach it here)')}`, '_blank');
 }
 
 // Primary storage: Google Sheets (via Apps Script Web App) — syncs across all staff devices.
@@ -399,8 +760,53 @@ async function loadData(){
     const v2 = await storageGet('activityLog');
     activityLog = v2 ? JSON.parse(v2) : [];
   }catch(e){ activityLog = []; }
+  try{
+    const v3 = await storageGet('staffApprovals');
+    staffApprovals = v3 ? JSON.parse(v3) : [];
+  }catch(e){ staffApprovals = []; }
+  try{
+    const saved = localStorage.getItem('ssa_currentStaff');
+    if(saved) currentStaff = JSON.parse(saved);
+  }catch(e){}
+  await purgeOldRecords();
   loaded = true;
   render();
+}
+
+// Any order (pending or dispatched) placed more than 12 months ago is removed
+// automatically — from Pending, Dispatched and Customers alike, since all
+// three are just different views of the same `bookings` array. Old Activity
+// Log entries beyond 12 months are cleared the same way. Runs once whenever
+// the app loads, on whichever device opens it first.
+async function purgeOldRecords(){
+  const cutoff = new Date();
+  cutoff.setMonth(cutoff.getMonth() - 12);
+
+  const removedCustomers = new Set();
+  const beforeBookings = bookings.length;
+  bookings = bookings.filter(b=>{
+    const keep = new Date(b.orderedAt) >= cutoff;
+    if(!keep) removedCustomers.add(b.customerName);
+    return keep;
+  });
+  const removedBookingsCount = beforeBookings - bookings.length;
+
+  const beforeActivity = activityLog.length;
+  activityLog = activityLog.filter(a=> new Date(a.timestamp) >= cutoff);
+  const removedActivityCount = beforeActivity - activityLog.length;
+
+  if(removedBookingsCount > 0 || removedActivityCount > 0){
+    activityLog.unshift({
+      id: uid(),
+      staffName: 'System',
+      staffMobile: '',
+      action: 'Auto Cleanup (12+ months old)',
+      detail: `Removed ${removedBookingsCount} order line(s)${removedCustomers.size ? ' for ' + [...removedCustomers].join(', ') : ''}, and ${removedActivityCount} old activity log entr${removedActivityCount===1?'y':'ies'}.`,
+      timestamp: new Date().toISOString()
+    });
+    await saveData();
+    await saveActivity();
+  }
 }
 async function saveData(){
   try{ await storageSet('bookings', JSON.stringify(bookings)); }
@@ -409,6 +815,20 @@ async function saveData(){
 async function saveActivity(){
   try{ await storageSet('activityLog', JSON.stringify(activityLog)); }
   catch(e){ console.error('activity save failed', e); }
+}
+async function saveApprovals(){
+  try{ await storageSet('staffApprovals', JSON.stringify(staffApprovals)); }
+  catch(e){ console.error('approvals save failed', e); }
+}
+async function notifyOwnerOfRequest(name, email){
+  if(!cloudAvailable) return;
+  try{
+    await fetch(SHEET_SCRIPT_URL, {
+      method:'POST',
+      headers: {'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify({ action:'notifyStaffRequest', name, email })
+    });
+  }catch(e){ console.error('owner notification failed', e); }
 }
 async function logActivity(action, detail){
   if(!currentStaff) return;
@@ -437,8 +857,8 @@ function renderTopbarRight(){
   if(!currentStaff){ el.innerHTML = ''; return; }
   const pending = bookings.filter(b=>b.status==='pending' && !b.trashed).reduce((s,b)=>s+b.qty,0);
   el.innerHTML = `
-    <span class="closing-badge">Pending: ${pending} Sets</span>
-    <span class="staff-badge">👤 ${escapeHtml(currentStaff.name)} <button onclick="logoutStaff()">Switch</button></span>
+    <span class="closing-badge">${t('pending_sets')}: ${pending} ${t('sets')}</span>
+    <span class="staff-badge">👤 ${escapeHtml(currentStaff.name)} <button onclick="logoutStaff()">${t('switch_btn')}</button></span>
   `;
 }
 
@@ -454,7 +874,7 @@ function updateDatalists(){
 function render(){
   const main = document.getElementById('main');
   const bottomNav = document.getElementById('bottomNav');
-  if(!loaded){ main.innerHTML = '<div class="empty">Loading...</div>'; return; }
+  if(!loaded){ main.innerHTML = '<div class="empty">'+t('loading_word')+'</div>'; return; }
 
   if(!currentStaff){
     bottomNav.style.display = 'none';
@@ -464,6 +884,11 @@ function render(){
   }
   bottomNav.style.display = 'flex';
 
+  const isOwner = currentStaff.mobile && currentStaff.mobile.toLowerCase() === OWNER_EMAIL.toLowerCase();
+  const approvalsBtn = document.getElementById('approvalsNavBtn');
+  if(approvalsBtn) approvalsBtn.style.display = isOwner ? 'flex' : 'none';
+  if(currentTab === 'approvals' && !isOwner) currentTab = 'book';
+
   renderTopbarRight();
   updateDatalists();
   if(currentTab==='book') renderBook(main);
@@ -472,46 +897,234 @@ function render(){
   else if(currentTab==='pendingOrders') renderPendingOrders(main);
   else if(currentTab==='deletedOrders') renderDeletedOrders(main);
   else if(currentTab==='activity') renderActivity(main);
+  else if(currentTab==='approvals') renderApprovals(main);
   else renderCustomers(main);
 }
 
 /* ---------------- LOGIN ---------------- */
 
 function renderLogin(main){
+  if(loginWaitingEmail){ renderLoginWaiting(main); return; }
+
   main.innerHTML = `
     <div class="login-wrap">
       <div class="login-card">
-        <h2>Staff Login</h2>
-        <p>Enter your name and mobile number to continue. This is used to identify who did what in the app.</p>
-        ${!cloudAvailable ? `<div class="msg err">Google Sheets backend URL is not set up yet. Data will only be saved on this phone and won't be visible to other staff.</div>` : ''}
+        <h2>${t('login_title')}</h2>
+        <p>${googleReady ? t('login_sub_google') : t('login_sub_manual')}</p>
+        ${!cloudAvailable ? `<div class="msg err">${t('login_cloud_warning')}</div>` : ''}
         <div id="loginMsg"></div>
-        <label>Your Name</label>
-        <input id="loginName" placeholder="e.g. Ramesh">
-        <label style="margin-top:10px;">Mobile Number</label>
-        <input id="loginMobile" type="tel" placeholder="10-digit mobile number">
-        <button class="primary" onclick="loginStaff()">Continue</button>
+        <label>${t('your_name')}</label>
+        <input id="loginName" placeholder="${t('name_ph')}">
+        ${googleReady
+            ? `<div class="login-divider">${t('then_word')}</div><div id="googleSignInBtn"></div>`
+            : `<button class="primary" onclick="loginStaffManual()">${t('continue_btn')}</button>`}
       </div>
     </div>
   `;
-  setTimeout(()=>{ const el = document.getElementById('loginName'); if(el) el.focus(); }, 0);
+  if(googleReady) setTimeout(initGoogleButton, 0);
+  else setTimeout(()=>{ const el = document.getElementById('loginName'); if(el) el.focus(); }, 0);
 }
 
-function loginStaff(){
+function renderLoginWaiting(main){
+  const entry = staffApprovals.find(s=>s.email===loginWaitingEmail);
+  const status = entry ? entry.status : 'pending';
+  main.innerHTML = `
+    <div class="login-wrap">
+      <div class="login-card">
+        <h2>${status==='rejected' ? t('rejected_title') : t('waiting_title')}</h2>
+        <p>${status==='rejected'
+            ? t('rejected_msg')
+            : `${t('waiting_msg1')} <b>${escapeHtml(OWNER_EMAIL)}</b>. ${t('waiting_msg2')}`}</p>
+        <button class="secondary" onclick="recheckApprovalStatus()">${t('check_again')}</button>
+        <button class="primary" style="margin-top:8px;" onclick="cancelLoginWait()">${t('use_diff_account')}</button>
+      </div>
+    </div>
+  `;
+}
+
+async function recheckApprovalStatus(){
+  try{
+    const v = await storageGet('staffApprovals');
+    if(v) staffApprovals = JSON.parse(v);
+  }catch(e){}
+  const entry = staffApprovals.find(s=>s.email===loginWaitingEmail);
+  if(entry && entry.status==='approved'){
+    currentStaff = { name: entry.name, mobile: entry.email };
+    try{ localStorage.setItem('ssa_currentStaff', JSON.stringify(currentStaff)); }catch(e){}
+    loginWaitingEmail = null;
+  }
+  render();
+}
+
+function cancelLoginWait(){
+  loginWaitingEmail = null;
+  render();
+}
+
+function initGoogleButton(){
+  if(!window.google || !google.accounts || !google.accounts.id) return;
+  try{
+    google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: handleGoogleCredential });
+    const el = document.getElementById('googleSignInBtn');
+    if(el) google.accounts.id.renderButton(el, { theme:'outline', size:'large', width:270 });
+  }catch(e){ console.error('Google sign-in init failed', e); }
+}
+
+function parseJwt(token){
+  try{
+    const base64 = token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/');
+    const json = decodeURIComponent(atob(base64).split('').map(c=>'%'+('00'+c.charCodeAt(0).toString(16)).slice(-2)).join(''));
+    return JSON.parse(json);
+  }catch(e){ return null; }
+}
+
+async function handleGoogleCredential(response){
+  const payload = parseJwt(response.credential);
+  if(!payload || !payload.email) return;
+  const email = payload.email;
+  const nameEl = document.getElementById('loginName');
+  const typedName = nameEl ? nameEl.value.trim() : '';
+  const name = typedName || payload.name || email;
+
+  // The owner's own Google account always gets straight in, and unlocks the
+  // Approvals tab for approving/rejecting everyone else.
+  if(email.toLowerCase() === OWNER_EMAIL.toLowerCase()){
+    currentStaff = { name, mobile: email };
+    try{ localStorage.setItem('ssa_currentStaff', JSON.stringify(currentStaff)); }catch(e){}
+    loginWaitingEmail = null;
+    render();
+    return;
+  }
+
+  const existing = staffApprovals.find(s=>s.email===email);
+  if(existing && existing.status === 'approved'){
+    currentStaff = { name: existing.name, mobile: email };
+    try{ localStorage.setItem('ssa_currentStaff', JSON.stringify(currentStaff)); }catch(e){}
+    loginWaitingEmail = null;
+    render();
+    return;
+  }
+
+  if(!existing){
+    staffApprovals.push({ name, email, status:'pending', requestedAt: new Date().toISOString() });
+    await saveApprovals();
+    notifyOwnerOfRequest(name, email); // fire-and-forget; owner gets an email
+  }
+  loginWaitingEmail = email;
+  render();
+}
+
+function loginStaffManual(){
   const name = document.getElementById('loginName').value.trim();
-  const mobile = document.getElementById('loginMobile').value.trim();
   const msg = document.getElementById('loginMsg');
-  if(!name){ msg.innerHTML = `<div class="msg err">Please enter your name</div>`; return; }
-  if(!mobile || mobile.length < 10){ msg.innerHTML = `<div class="msg err">Please enter a valid mobile number</div>`; return; }
-  currentStaff = { name, mobile };
+  if(!name){ msg.innerHTML = `<div class="msg err">${t('enter_name_err')}</div>`; return; }
+  currentStaff = { name, mobile: '' };
+  try{ localStorage.setItem('ssa_currentStaff', JSON.stringify(currentStaff)); }catch(e){}
   render();
 }
 
 function logoutStaff(){
   currentStaff = null;
+  loginWaitingEmail = null;
+  try{ localStorage.removeItem('ssa_currentStaff'); }catch(e){}
+  if(googleReady && window.google && google.accounts && google.accounts.id){
+    try{ google.accounts.id.disableAutoSelect(); }catch(e){}
+  }
   currentTab = 'book';
   document.querySelectorAll('.navbtn').forEach(b=>b.classList.remove('active'));
   const first = document.querySelector('.navbtn[data-tab="book"]');
   if(first) first.classList.add('active');
+  render();
+}
+
+/* ---------------- STAFF APPROVALS TAB (owner only) ---------------- */
+
+function renderApprovals(main){
+  const pending = staffApprovals.filter(s=>s.status==='pending').sort((a,b)=>new Date(b.requestedAt)-new Date(a.requestedAt));
+  const approved = staffApprovals.filter(s=>s.status==='approved');
+  const rejected = staffApprovals.filter(s=>s.status==='rejected');
+
+  const pendingHtml = pending.length ? pending.map(s=>`
+    <div class="cust-card">
+      <div class="cust-head"><span class="name">${escapeHtml(s.name)}</span><span class="set-pill pending">${t('badge_pending')}</span></div>
+      <div style="font-size:13px;color:#5b6472;">${escapeHtml(s.email)} · ${t('requested')} ${fmtTime(s.requestedAt)}</div>
+      <div class="action-row">
+        <button class="action-btn wa" onclick="approveStaff('${s.email.replace(/'/g,"\\'")}')">${t('approve')}</button>
+        <button class="action-btn del" onclick="rejectStaff('${s.email.replace(/'/g,"\\'")}')">${t('reject')}</button>
+      </div>
+    </div>
+  `).join('') : `<div class="empty">${t('no_pending_requests')}</div>`;
+
+  const approvedHtml = approved.length ? approved.map(s=>`
+    <div class="cust-card">
+      <div class="cust-head"><span class="name">${escapeHtml(s.name)}</span><span class="set-pill done">${t('badge_approved')}</span></div>
+      <div style="font-size:13px;color:#5b6472;">${escapeHtml(s.email)}</div>
+      <div style="margin-top:6px;">
+        <span class="set-pill ${s.canDelete ? 'done' : 'pending'}">${s.canDelete ? t('delete_allowed') : t('delete_blocked')}</span>
+      </div>
+      <div class="action-row">
+        <button class="action-btn ${s.canDelete ? 'del' : 'wa'}" onclick="toggleDeletePermission('${s.email.replace(/'/g,"\\'")}')">${s.canDelete ? t('block_delete') : t('allow_delete')}</button>
+        <button class="action-btn del" onclick="revokeStaff('${s.email.replace(/'/g,"\\'")}')">${t('revoke_access')}</button>
+      </div>
+    </div>
+  `).join('') : `<div class="empty">${t('no_approved_staff')}</div>`;
+
+  const rejectedHtml = rejected.length ? rejected.map(s=>`
+    <div class="cust-card">
+      <div class="cust-head"><span class="name">${escapeHtml(s.name)}</span><span class="set-pill pending">${t('badge_rejected')}</span></div>
+      <div style="font-size:13px;color:#5b6472;">${escapeHtml(s.email)}</div>
+      <div class="action-row">
+        <button class="action-btn wa" onclick="approveStaff('${s.email.replace(/'/g,"\\'")}')">${t('approve_anyway')}</button>
+      </div>
+    </div>
+  `).join('') : '';
+
+  main.innerHTML = `
+    <div class="card"><h2>${t('pending_requests')} (${pending.length})</h2></div>
+    ${pendingHtml}
+    <div class="card" style="margin-top:18px;"><h2>${t('approved_staff')} (${approved.length})</h2></div>
+    ${approvedHtml}
+    ${rejected.length ? `<div class="card" style="margin-top:18px;"><h2>${t('rejected_heading')} (${rejected.length})</h2></div>${rejectedHtml}` : ''}
+  `;
+}
+
+async function approveStaff(email){
+  const s = staffApprovals.find(x=>x.email===email);
+  if(!s) return;
+  s.status = 'approved';
+  s.approvedAt = new Date().toISOString();
+  if(s.canDelete === undefined) s.canDelete = false; // owner must explicitly grant delete rights
+  await saveApprovals();
+  await logActivity('Staff Approved', `${s.name} (${email})`);
+  render();
+}
+
+async function toggleDeletePermission(email){
+  const s = staffApprovals.find(x=>x.email===email);
+  if(!s) return;
+  s.canDelete = !s.canDelete;
+  await saveApprovals();
+  await logActivity(s.canDelete ? 'Delete Access Granted' : 'Delete Access Blocked', `${s.name} (${email})`);
+  render();
+}
+
+async function rejectStaff(email){
+  const s = staffApprovals.find(x=>x.email===email);
+  if(!s) return;
+  if(!confirm(`${t('reject_confirm')} ${s.name} (${email})?`)) return;
+  s.status = 'rejected';
+  await saveApprovals();
+  await logActivity('Staff Rejected', `${s.name} (${email})`);
+  render();
+}
+
+async function revokeStaff(email){
+  const s = staffApprovals.find(x=>x.email===email);
+  if(!s) return;
+  if(!confirm(`${t('revoke_confirm')} ${s.name} (${email})? ${t('revoke_confirm2')}`)) return;
+  s.status = 'rejected';
+  await saveApprovals();
+  await logActivity('Staff Access Revoked', `${s.name} (${email})`);
   render();
 }
 
@@ -521,8 +1134,8 @@ function renderBook(main){
   const cartBlocks = draftCart.map((d, idx)=>{
     const chips = d.sizes.map(s=>`<span class="chip">${escapeHtml(s.size)} · ${s.qty}</span>`).join('');
     return `<div class="design-block">
-      <div class="dhead"><span>Design No. ${escapeHtml(d.designNumber)}</span>
-      <button class="chip x" style="border:none;background:none;color:var(--rust);font-weight:700;" onclick="removeCartDesign(${idx})">Remove ✕</button></div>
+      <div class="dhead"><span>${t('design_word')} No. ${escapeHtml(d.designNumber)}${d.colour ? ' · '+escapeHtml(d.colour) : ''}</span>
+      <button class="chip x" style="border:none;background:none;color:var(--rust);font-weight:700;" onclick="removeCartDesign(${idx})">${t('remove')} ✕</button></div>
       <div>${chips}</div>
     </div>`;
   }).join('');
@@ -531,41 +1144,76 @@ function renderBook(main){
 
   main.innerHTML = `
     <div class="card">
-      <h2>Customer Name</h2>
-      <input id="custName" list="customerList" placeholder="Enter customer name" value="${escapeHtml(draftCustomer)}" oninput="draftCustomer=this.value">
-      <label style="margin-top:10px;">Brand Name</label>
-      <input id="custBrand" list="brandList" placeholder="Enter brand name" value="${escapeHtml(draftBrand)}" oninput="draftBrand=this.value">
+      <h2>${t('customer_name')}</h2>
+      <input id="custName" list="customerList" placeholder="${t('enter_customer_name')}" value="${escapeHtml(draftCustomer)}" oninput="draftCustomer=this.value">
+      <label style="margin-top:10px;">${t('brand_name')} *</label>
+      <input id="custBrand" list="brandList" placeholder="${t('enter_brand_name')}" value="${escapeHtml(draftBrand)}" oninput="draftBrand=this.value">
     </div>
 
     <div class="card">
-      <h2>Add Design</h2>
+      <h2>${t('add_design')}</h2>
       <div id="bookMsg"></div>
-      <label>Design Number</label>
-      <input id="designNo" list="designList" placeholder="e.g. 2145" value="${escapeHtml(tempDesignNumber)}" oninput="tempDesignNumber=this.value">
+      <label>${t('design_number')}</label>
+      <input id="designNo" list="designList" placeholder="${t('design_ph')}" value="${escapeHtml(tempDesignNumber)}" oninput="tempDesignNumber=this.value">
 
-      <div class="row" style="margin-top:10px;">
-        <div>
-          <label>Size</label>
-          <input id="sizeVal" placeholder="e.g. M">
+      <label style="margin-top:10px;">${t('colour_optional')}</label>
+      <input id="designColour" placeholder="${t('colour_ph')}" value="${escapeHtml(tempColour)}" oninput="tempColour=this.value">
+
+      <label style="margin-top:10px;">${t('size')}</label>
+      <div class="row">
+        <div class="size-suggest-wrap" id="sizeSuggestWrap">
+          <input id="sizeVal" placeholder="${t('size_ph')}" autocomplete="off" oninput="filterSizeSuggestions()" onfocus="showSizeSuggestions()">
+          <div id="sizeSuggestions" class="size-suggest-dropdown" style="display:none;"></div>
         </div>
-        <div>
-          <label>Set</label>
+        <div style="max-width:80px;">
+          <label>${t('set')}</label>
           <input id="qtyVal" type="number" min="1" value="1">
         </div>
         <button class="small btn-inline" onclick="addTempSize()">+</button>
       </div>
-      <div>${tempChips || '<span style="color:#7e8896;font-size:13px;">No size added yet</span>'}</div>
+      <div>${tempChips || `<span style="color:#7e8896;font-size:13px;">${t('no_size_added')}</span>`}</div>
 
-      <button class="secondary" style="margin-top:12px;" onclick="addDesignToCart()">Add This Design to Order</button>
+      <button class="secondary" style="margin-top:12px;" onclick="addDesignToCart()">${t('add_design_btn')}</button>
     </div>
 
     <div class="card">
-      <h2>Designs in This Order (${draftCart.length})</h2>
-      ${cartBlocks || '<div class="empty">No design added yet</div>'}
-      ${draftCart.length ? `<button class="primary" onclick="saveOrder()">Save Order</button>` : ''}
+      <h2>${t('designs_in_order')} (${draftCart.length})</h2>
+      ${cartBlocks || `<div class="empty">${t('no_design_added')}</div>`}
+      ${draftCart.length ? `<button class="primary" onclick="saveOrder()">${t('save_order')}</button>` : ''}
     </div>
   `;
 }
+
+function renderSizeSuggestions(filterVal){
+  const box = document.getElementById('sizeSuggestions');
+  if(!box) return;
+  const q = (filterVal||'').trim().toLowerCase();
+  const list = q ? SIZE_PRESETS.filter(s=>s.toLowerCase().includes(q)) : SIZE_PRESETS;
+  if(!list.length){ box.style.display = 'none'; return; }
+  box.innerHTML = list.map(s=>`<div class="size-suggest-item" onmousedown="event.preventDefault();chooseSizeSuggestion('${s.replace(/'/g,"\\'")}')">${escapeHtml(s)}</div>`).join('');
+  box.style.display = 'block';
+}
+function showSizeSuggestions(){
+  const el = document.getElementById('sizeVal');
+  renderSizeSuggestions(el ? el.value : '');
+}
+function filterSizeSuggestions(){
+  const el = document.getElementById('sizeVal');
+  renderSizeSuggestions(el ? el.value : '');
+}
+function chooseSizeSuggestion(s){
+  const el = document.getElementById('sizeVal');
+  if(el) el.value = s;
+  const box = document.getElementById('sizeSuggestions');
+  if(box) box.style.display = 'none';
+  const qtyEl = document.getElementById('qtyVal');
+  if(qtyEl){ qtyEl.focus(); qtyEl.select(); }
+}
+document.addEventListener('click', function(e){
+  const wrap = document.getElementById('sizeSuggestWrap');
+  const box = document.getElementById('sizeSuggestions');
+  if(wrap && box && !wrap.contains(e.target)) box.style.display = 'none';
+});
 
 function addTempSize(){
   const sizeInput = document.getElementById('sizeVal');
@@ -574,7 +1222,7 @@ function addTempSize(){
   const qty = parseInt(qtyInput.value) || 0;
   const msg = document.getElementById('bookMsg');
   if(!size || qty <= 0){
-    msg.innerHTML = `<div class="msg err">Please enter size and set correctly</div>`;
+    msg.innerHTML = `<div class="msg err">${t('size_qty_err')}</div>`;
     return;
   }
   tempSizes.push({ size, qty });
@@ -589,11 +1237,13 @@ function removeTempSize(i){ tempSizes.splice(i,1); render(); }
 
 function addDesignToCart(){
   const designNo = document.getElementById('designNo').value.trim();
+  const colour = document.getElementById('designColour').value.trim();
   const msg = document.getElementById('bookMsg');
-  if(!designNo){ msg.innerHTML = `<div class="msg err">Please enter design number</div>`; return; }
-  if(!tempSizes.length){ msg.innerHTML = `<div class="msg err">Add at least one size</div>`; return; }
-  draftCart.push({ designNumber: designNo, sizes: tempSizes });
+  if(!designNo){ msg.innerHTML = `<div class="msg err">${t('enter_design_err')}</div>`; return; }
+  if(!tempSizes.length){ msg.innerHTML = `<div class="msg err">${t('add_size_err')}</div>`; return; }
+  draftCart.push({ designNumber: designNo, colour: colour, sizes: tempSizes });
   tempDesignNumber = '';
+  tempColour = '';
   tempSizes = [];
   render();
   setTimeout(()=>document.getElementById('designNo').focus(), 0);
@@ -605,7 +1255,8 @@ async function saveOrder(){
   const custName = (document.getElementById('custName').value || '').trim();
   const custBrand = (document.getElementById('custBrand').value || '').trim();
   const msg = document.getElementById('bookMsg');
-  if(!custName){ msg.innerHTML = `<div class="msg err">Please enter customer name</div>`; return; }
+  if(!custName){ msg.innerHTML = `<div class="msg err">${t('enter_customer_err')}</div>`; return; }
+  if(!custBrand){ msg.innerHTML = `<div class="msg err">${t('enter_brand_err')}</div>`; return; }
   if(!draftCart.length){ return; }
 
   const now = new Date().toISOString();
@@ -618,6 +1269,7 @@ async function saveOrder(){
         customerName: custName,
         brand: custBrand,
         designNumber: d.designNumber,
+        colour: d.colour || '',
         size: s.size,
         qty: s.qty,
         status: 'pending',
@@ -636,76 +1288,236 @@ async function saveOrder(){
   draftCustomer = '';
   draftBrand = '';
   tempDesignNumber = '';
+  tempColour = '';
   tempSizes = [];
   render();
   const m2 = document.getElementById('bookMsg');
-  if(m2) m2.innerHTML = `<div class="msg ok">${count} designs saved to order</div>`;
+  if(m2) m2.innerHTML = `<div class="msg ok">${count} ${t('designs_saved')}</div>`;
 }
 
 /* ---------------- ARTICLE (DISPATCH) SEARCH TAB ---------------- */
 
+function inDispatchDateRange(iso){
+  if(!dispatchFromDate && !dispatchToDate) return true;
+  if(!iso) return false;
+  const key = dispatchDateKey(iso);
+  if(dispatchFromDate && key < dispatchFromDate) return false;
+  if(dispatchToDate && key > dispatchToDate) return false;
+  return true;
+}
+
 function renderDispatch(main){
-  const q = dispatchQuery.trim().toLowerCase();
   const activeBookings = bookings.filter(b=>!b.trashed);
   const allDesigns = [...new Set(activeBookings.map(b=>b.designNumber))];
-  const matchingDesigns = q ? allDesigns.filter(d=>d.toLowerCase().includes(q)) : [];
 
   let resultsHtml = '';
+  let exactDesign = null;
+  const hasArticleQuery = !!dispatchQuery.trim();
+  const hasBrandQuery = !!dispatchBrandQuery.trim();
 
-  if(q && !matchingDesigns.length){
-    resultsHtml = `<div class="empty">No order found for this article number</div>`;
-  } else if(matchingDesigns.length > 1){
-    resultsHtml = `<div class="card">
-      <div class="section-label" style="margin-top:0;">Matching Articles — Select One</div>
-      ${matchingDesigns.map(d=>`<button class="secondary" style="margin-top:8px;text-align:left;" onclick="pickDesign('${d.replace(/'/g,"\\'")}')">${escapeHtml(d)}</button>`).join('')}
-    </div>`;
-  } else if(matchingDesigns.length === 1){
-    const exactDesign = matchingDesigns[0];
-    const matches = activeBookings.filter(b=>b.designNumber===exactDesign);
+  if(selectedDesign){
+    // A design was explicitly picked from the selection list (or matched itself
+    // exactly) — always resolve to exactly this design, even if its digits
+    // happen to also appear inside a longer design number like "118 NAVY PURPLE".
+    exactDesign = selectedDesign;
+  } else if(hasArticleQuery){
+    const q = dispatchQuery.trim().toLowerCase();
+    const matchingDesigns = allDesigns.filter(d=>d.toLowerCase().includes(q));
+    if(!matchingDesigns.length){
+      resultsHtml = `<div class="empty">${t('no_article_found')}</div>`;
+    } else if(matchingDesigns.length > 1){
+      resultsHtml = `<div class="card">
+        <div class="section-label" style="margin-top:0;">${t('matching_articles')}</div>
+        ${matchingDesigns.map(d=>`<button class="secondary" style="margin-top:8px;text-align:left;" onclick="pickDesign('${d.replace(/'/g,"\\'")}')">${escapeHtml(d)}</button>`).join('')}
+      </div>`;
+    } else {
+      exactDesign = matchingDesigns[0];
+    }
+  }
+
+  if(exactDesign){
+    let matches = activeBookings.filter(b=>b.designNumber===exactDesign && inDispatchDateRange(b.orderedAt));
+    if(hasBrandQuery){
+      const bq = dispatchBrandQuery.trim().toLowerCase();
+      matches = matches.filter(b=>(b.brand||'').toLowerCase().includes(bq));
+    }
     const pendingQty = matches.filter(b=>b.status==='pending').reduce((s,b)=>s+b.qty,0);
     const doneQty = matches.filter(b=>b.status==='dispatched').reduce((s,b)=>s+b.qty,0);
 
     const customers = [...new Set(matches.map(b=>b.customerName))];
-    const custCards = customers.map(cname=>{
+    const custCards = customers.length ? customers.map(cname=>{
       const rows = matches.filter(b=>b.customerName===cname);
-      const chips = rows.map(b=>{
-        const done = b.status==='dispatched';
-        return `<button class="size-btn ${done?'done':''}" ${done?'disabled':''} onclick="dispatchOne('${b.id}')">${escapeHtml(b.size)} · ${b.qty}${done?' ✓':''}</button>`;
-      }).join('');
-      return `<div class="cust-card">
-        <div class="cust-head"><span class="name">${escapeHtml(cname)}</span></div>
-        <div>${chips}</div>
-      </div>`;
-    }).join('');
+      const allDone = rows.every(b=>b.status==='dispatched');
 
+      // group this customer's rows by colour + brand together, since the same
+      // customer (or different customers) can order the same article under
+      // different brands and/or colours — staff need to see exactly which
+      // sizes belong to which brand+colour combo, not just a flat list
+      const groups = {};
+      rows.forEach(b=>{
+        const key = (b.colour||'') + '||' + (b.brand||'');
+        if(!groups[key]) groups[key] = [];
+        groups[key].push(b);
+      });
+      const groupKeys = Object.keys(groups);
+      const showGroupLabels = groupKeys.length > 1 || (groupKeys.length===1 && groupKeys[0] !== '||');
+
+      const groupsHtml = groupKeys.map(key=>{
+        const [colour, brand] = key.split('||');
+        const chips = groups[key].map(b=>{
+          const done = b.status==='dispatched';
+          return `<button class="size-btn ${done?'done':''}" ${done?'disabled':''} onclick="dispatchOne('${b.id}')">${escapeHtml(b.size)} · ${b.qty}${done?' ✓':''}</button>`;
+        }).join('');
+        let labelText = '';
+        if(colour && brand) labelText = `${colour} · ${brand}`;
+        else if(colour) labelText = colour;
+        else if(brand) labelText = brand;
+        else labelText = t('no_colour_brand');
+        const label = showGroupLabels ? `<div class="colour-label">${escapeHtml(labelText)}</div>` : '';
+        return `${label}<div>${chips}</div>`;
+      }).join('');
+
+      return `<div class="cust-card${allDone ? ' all-done' : ''}">
+        <div class="cust-head"><span class="name">${escapeHtml(cname)}</span>${allDone ? `<span class="set-pill done">${t('fully_dispatched')}</span>` : ''}</div>
+        ${groupsHtml}
+      </div>`;
+    }).join('') : `<div class="empty">${t('no_article_found')}</div>`;
+
+    const allColours = [...new Set(matches.map(b=>b.colour).filter(Boolean))];
+    const allBrands = [...new Set(matches.map(b=>b.brand).filter(Boolean))];
     resultsHtml = `
       <div class="card">
-        <div class="section-label" style="margin-top:0;">Article: ${escapeHtml(exactDesign)}</div>
+        <div class="section-label" style="margin-top:0;">${t('article')}: ${escapeHtml(exactDesign)}
+          ${selectedDesign ? `<button class="chip x" style="border:none;background:none;color:var(--navy);font-weight:700;float:right;" onclick="clearDesignSelection()">✕ ${t('change')}</button>` : ''}
+        </div>
+        ${allColours.length ? `<div style="font-size:13px;color:#5b6472;margin-bottom:4px;">${t('colours_ordered')}: ${allColours.map(escapeHtml).join(', ')}</div>` : ''}
+        ${allBrands.length ? `<div style="font-size:13px;color:#5b6472;margin-bottom:8px;">${t('brands_ordered')}: ${allBrands.map(escapeHtml).join(', ')}</div>` : ''}
         <div style="display:flex;gap:8px;flex-wrap:wrap;">
-          <span class="set-pill pending">Closing Set: ${pendingQty} Pending</span>
-          <span class="set-pill done">Dispatched: ${doneQty}</span>
+          <span class="set-pill pending">${t('closing_set')}: ${pendingQty} ${t('badge_pending')}</span>
+          <span class="set-pill done">${t('dispatched')}: ${doneQty}</span>
         </div>
       </div>
       ${custCards}
     `;
+  } else if(!hasArticleQuery && hasBrandQuery){
+    // Article number left blank, only a brand typed — show every article
+    // ordered under that brand, grouped by article then colour, each line
+    // naming the customer and size, plus a Print (PDF) option for the list.
+    const bq = dispatchBrandQuery.trim().toLowerCase();
+    const brandMatches = activeBookings.filter(b=>(b.brand||'').toLowerCase().includes(bq) && inDispatchDateRange(b.orderedAt));
+
+    if(!brandMatches.length){
+      resultsHtml = `<div class="empty">${t('no_brand_orders')}</div>`;
+    } else {
+      const designGroups = {};
+      brandMatches.forEach(b=>{
+        if(!designGroups[b.designNumber]) designGroups[b.designNumber] = [];
+        designGroups[b.designNumber].push(b);
+      });
+      const designKeys = Object.keys(designGroups).sort((a,b)=>a.localeCompare(b));
+      const totalSets = brandMatches.reduce((s,b)=>s+b.qty,0);
+
+      const articleCards = designKeys.map(dn=>{
+        const rows = designGroups[dn];
+        const dnTotal = rows.reduce((s,b)=>s+b.qty,0);
+        const colourGroups = {};
+        rows.forEach(b=>{
+          const key = b.colour || '';
+          if(!colourGroups[key]) colourGroups[key] = [];
+          colourGroups[key].push(b);
+        });
+        const colourKeys = Object.keys(colourGroups);
+        const showColourLabels = colourKeys.length > 1 || (colourKeys.length===1 && colourKeys[0] !== '');
+
+        const colourSections = colourKeys.map(colour=>{
+          const lines = colourGroups[colour].map(b=>{
+            const done = b.status==='dispatched';
+            return `<div class="item-line"><span>${escapeHtml(b.customerName)} · ${escapeHtml(b.size)}</span><span>${b.qty} ${t('set')} ${done?'✓':''}</span></div>`;
+          }).join('');
+          const label = showColourLabels ? `<div class="colour-label">${escapeHtml(colour || t('no_colour'))}</div>` : '';
+          return `${label}${lines}`;
+        }).join('');
+
+        return `<div class="cust-card">
+          <div class="cust-head"><span class="name">${t('article')}: ${escapeHtml(dn)}</span><span class="set-pill pending">${dnTotal} ${t('sets')}</span></div>
+          ${colourSections}
+        </div>`;
+      }).join('');
+
+      resultsHtml = `
+        <div class="card">
+          <div class="section-label" style="margin-top:0;">${t('brand_overview')}: ${escapeHtml(dispatchBrandQuery.trim())}</div>
+          <div style="font-size:13px;color:#5b6472;margin-bottom:10px;">${designKeys.length} ${t('articles_word')} · ${totalSets} ${t('sets')}</div>
+          <button class="secondary" onclick="printBrandOverview()">${t('print')} PDF</button>
+        </div>
+        ${articleCards}
+      `;
+    }
   }
 
   main.innerHTML = `
     <div class="card">
-      <h2>Search by Article Number</h2>
-      <input id="dispatchSearch" list="designList" placeholder="Enter full or partial article number" value="${escapeHtml(dispatchQuery)}" oninput="onDispatchSearch(this.value)" autofocus>
+      <h2>${t('search_by_article')}</h2>
+      <input id="dispatchSearch" list="designList" placeholder="${t('article_ph')}" value="${escapeHtml(dispatchQuery)}" oninput="onDispatchSearch(this.value)" autofocus>
+      <label style="margin-top:10px;">${t('by_brand_name')} (${t('optional_word')})</label>
+      <input id="dispatchBrandSearch" list="brandList" placeholder="${t('brand_ph_optional')}" value="${escapeHtml(dispatchBrandQuery)}" oninput="onDispatchBrandSearch(this.value)">
+      <label style="margin-top:10px;">${t('from_date')} (${t('optional_word')})</label>
+      <input id="dispatchFromDate" type="date" value="${escapeHtml(dispatchFromDate)}" oninput="onDispatchDateRange('from', this.value)">
+      <label style="margin-top:10px;">${t('to_date')} (${t('optional_word')})</label>
+      <input id="dispatchToDate" type="date" value="${escapeHtml(dispatchToDate)}" oninput="onDispatchDateRange('to', this.value)">
     </div>
     ${resultsHtml}
   `;
 }
 
+function onDispatchDateRange(which, val){
+  if(which==='from') dispatchFromDate = val; else dispatchToDate = val;
+  render();
+}
+
+function printBrandOverview(){
+  const bq = dispatchBrandQuery.trim();
+  if(!bq) return;
+  const bql = bq.toLowerCase();
+  const matches = bookings.filter(b=>!b.trashed && (b.brand||'').toLowerCase().includes(bql) && inDispatchDateRange(b.orderedAt))
+    .sort((a,b)=> a.designNumber.localeCompare(b.designNumber) || (a.colour||'').localeCompare(b.colour||'') || a.customerName.localeCompare(b.customerName));
+  if(!matches.length){ alert(t('no_brand_orders')); return; }
+  const totalSets = matches.reduce((s,b)=>s+b.qty,0);
+  const rows = matches.map(b=>[b.designNumber, b.colour||'-', b.customerName, b.size, String(b.qty), b.status==='dispatched'?t('dispatched'):t('badge_pending')]);
+  let dateNote = '';
+  if(dispatchFromDate || dispatchToDate){
+    dateNote = ` (${dispatchFromDate ? dispatchDateLabel(dispatchFromDate) : '…'} – ${dispatchToDate ? dispatchDateLabel(dispatchToDate) : '…'})`;
+  }
+  const blob = buildPdfBlob(`${t('brand_overview')}: ${bq}${dateNote}`, `Subhash Sales Agencies · ${new Date().toLocaleDateString('en-IN')}`, ['Article','Colour','Customer','Size','Set','Status'], rows, `${t('total')}: ${totalSets} ${t('sets')}`);
+  if(!blob){ alert(t('pdf_gen_fail')); return; }
+  openPdfBlob(blob, `Brand-${bq.replace(/[^a-z0-9]/gi,'_')}.pdf`);
+}
+
+function onDispatchBrandSearch(val){
+  dispatchBrandQuery = val;
+  render();
+  setTimeout(()=>{
+    const el = document.getElementById('dispatchBrandSearch');
+    if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+  }, 0);
+}
+
 function pickDesign(fullDesign){
+  selectedDesign = fullDesign;
   dispatchQuery = fullDesign;
   render();
 }
 
+function clearDesignSelection(){
+  selectedDesign = null;
+  dispatchQuery = '';
+  render();
+  setTimeout(()=>{ const el = document.getElementById('dispatchSearch'); if(el) el.focus(); }, 0);
+}
+
 function onDispatchSearch(val){
   dispatchQuery = val;
+  selectedDesign = null;
   render();
   setTimeout(()=>{
     const el = document.getElementById('dispatchSearch');
@@ -726,128 +1538,127 @@ async function dispatchOne(bookingId){
 
 /* ---------------- DISPATCHED ORDERS TAB ---------------- */
 
-function renderDispatchedOrders(main){
-  const dispatchedAll = bookings.filter(b=>b.status==='dispatched' && !b.trashed);
+function dispatchDateKey(iso){
+  const d = new Date(iso);
+  const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), day = String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${day}`;
+}
+function dispatchDateLabel(key){
+  const [y,m,d] = key.split('-').map(Number);
+  return new Date(y, m-1, d).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' });
+}
 
-  let matchedCustomers = [...new Set(dispatchedAll.map(b=>b.customerName))];
+function renderDispatchedOrders(main){
+  let dispatchedAll = bookings.filter(b=>b.status==='dispatched' && !b.trashed);
 
   if(doSearchDesign.trim()){
     const q = doSearchDesign.trim().toLowerCase();
-    const namesWithDesign = new Set(
-      dispatchedAll.filter(b=>b.designNumber.toLowerCase().includes(q)).map(b=>b.customerName)
-    );
-    matchedCustomers = matchedCustomers.filter(n=>namesWithDesign.has(n));
+    dispatchedAll = dispatchedAll.filter(b=>b.designNumber.toLowerCase().includes(q));
   }
-  if(doSearchCustomer.trim()){
-    const q = doSearchCustomer.trim().toLowerCase();
-    matchedCustomers = matchedCustomers.filter(n=>n.toLowerCase().includes(q));
+  if(doSearchBrand.trim()){
+    const q = doSearchBrand.trim().toLowerCase();
+    dispatchedAll = dispatchedAll.filter(b=>(b.brand||'').toLowerCase().includes(q));
   }
-
-  const showResults = doSearchDesign.trim() || doSearchCustomer.trim();
+  if(doSearchDate){
+    dispatchedAll = dispatchedAll.filter(b=>dispatchDateKey(b.dispatchedAt)===doSearchDate);
+  }
 
   let resultsHtml = '';
-  if(showResults && !matchedCustomers.length){
-    resultsHtml = `<div class="empty">No dispatched order found</div>`;
-  } else if(showResults){
-    resultsHtml = matchedCustomers.map(cname=>renderDispatchedCustomerCard(cname, dispatchedAll)).join('');
+  if(!dispatchedAll.length){
+    resultsHtml = `<div class="empty">${t('no_dispatched_orders')}${(doSearchDesign||doSearchBrand||doSearchDate) ? ' '+t('no_dispatched_match') : ' '+t('no_dispatched_yet')}</div>`;
   } else {
-    resultsHtml = `<div class="empty">Enter an article number or customer name to view their dispatched order</div>`;
+    const dateGroups = {};
+    dispatchedAll.forEach(b=>{
+      const dk = dispatchDateKey(b.dispatchedAt);
+      if(!dateGroups[dk]) dateGroups[dk] = {};
+      if(!dateGroups[dk][b.customerName]) dateGroups[dk][b.customerName] = [];
+      dateGroups[dk][b.customerName].push(b);
+    });
+    const dateKeys = Object.keys(dateGroups).sort((a,b)=>b.localeCompare(a));
+    resultsHtml = dateKeys.map(dk=>{
+      const custMap = dateGroups[dk];
+      const custCards = Object.keys(custMap).map(cname=>{
+        const rows = custMap[cname].sort((a,b)=>(a.designNumber).localeCompare(b.designNumber));
+        const total = rows.reduce((s,b)=>s+b.qty,0);
+        const brands = [...new Set(rows.map(b=>b.brand).filter(Boolean))].join(', ');
+        const lines = rows.map(b=>
+          `<div class="item-line"><span>${t('design_word')} ${escapeHtml(b.designNumber)}${b.colour?(' · '+escapeHtml(b.colour)):''} · ${escapeHtml(b.size)}</span><span>${b.qty} ${t('set')} <button class="undo-link" onclick="undoDispatch('${b.id}')">${t('undo')}</button></span></div>`
+        ).join('');
+        return `<div class="cust-card">
+          <div class="cust-head"><span class="name">${escapeHtml(cname)}${brands ? ` <span class="subtle">(${escapeHtml(brands)})</span>` : ''}</span><span class="set-pill done">${total} ${t('sets')}</span></div>
+          ${lines}
+          <div class="order-total-line"><span>${t('total')}</span><span>${total} ${t('sets')}</span></div>
+          <div class="action-row">
+            <button class="action-btn wa" onclick="shareWhatsAppDated('${cname.replace(/'/g,"\\'")}','${dk}')">${t('whatsapp')}</button>
+            <button class="action-btn pr" onclick="printOrderDated('${cname.replace(/'/g,"\\'")}','${dk}')">${t('print')}</button>
+            ${canCurrentUserDelete() ? `<button class="action-btn del" onclick="deleteOrderDated('${cname.replace(/'/g,"\\'")}','${dk}')">${t('delete_btn')}</button>` : ''}
+          </div>
+        </div>`;
+      }).join('');
+      return `<div class="date-section-label">${dispatchDateLabel(dk)}</div>${custCards}`;
+    }).join('');
   }
 
   main.innerHTML = `
     <div class="card">
-      <h2>Search Dispatched Orders</h2>
-      <label>By Article Number</label>
-      <input id="doSearchDesign" list="designList" placeholder="Enter article number" value="${escapeHtml(doSearchDesign)}" oninput="onDoSearch('design', this.value)">
-      <label style="margin-top:10px;">By Customer Name</label>
-      <input id="doSearchCustomer" list="customerList" placeholder="Enter customer name" value="${escapeHtml(doSearchCustomer)}" oninput="onDoSearch('customer', this.value)">
+      <h2>${t('search_dispatched')}</h2>
+      <label>${t('by_article_number')}</label>
+      <input id="doSearchDesign" list="designList" placeholder="${t('article_ph')}" value="${escapeHtml(doSearchDesign)}" oninput="onDoSearch('design', this.value)">
+      <label style="margin-top:10px;">${t('by_brand_name')}</label>
+      <input id="doSearchBrand" list="brandList" placeholder="${t('type_brand_name')}" value="${escapeHtml(doSearchBrand)}" oninput="onDoSearch('brand', this.value)">
+      <label style="margin-top:10px;">${t('by_date')}</label>
+      <input id="doSearchDate" type="date" value="${escapeHtml(doSearchDate)}" oninput="onDoSearch('date', this.value)">
     </div>
     ${resultsHtml}
   `;
 }
 
-function renderDispatchedCustomerCard(cname, dispatchedAll){
-  const rows = dispatchedAll.filter(b=>b.customerName===cname)
-    .sort((a,b)=>(a.designNumber).localeCompare(b.designNumber));
-  const total = rows.reduce((s,b)=>s+b.qty,0);
-  const lines = rows.map(b=>
-    `<div class="item-line"><span>Design ${escapeHtml(b.designNumber)} · ${escapeHtml(b.size)}${b.brand?(' · '+escapeHtml(b.brand)):''}</span><span>${b.qty} Set</span></div>`
-  ).join('');
-
-  return `<div class="cust-card">
-    <div class="cust-head"><span class="name">${escapeHtml(cname)}</span><span class="set-pill done">${total} Sets</span></div>
-    ${lines}
-    <div class="order-total-line"><span>Total</span><span>${total} Sets</span></div>
-    <div class="action-row">
-      <button class="action-btn wa" onclick="shareWhatsApp('${cname.replace(/'/g,"\\'")}')">WhatsApp</button>
-      <button class="action-btn pr" onclick="printOrder('${cname.replace(/'/g,"\\'")}')">Print</button>
-      <button class="action-btn del" onclick="deleteOrder('${cname.replace(/'/g,"\\'")}')">Delete</button>
-    </div>
-  </div>`;
-}
-
 function onDoSearch(which, val){
-  if(which==='design') doSearchDesign = val; else doSearchCustomer = val;
+  if(which==='design') doSearchDesign = val;
+  else if(which==='brand') doSearchBrand = val;
+  else doSearchDate = val;
   render();
   setTimeout(()=>{
-    const id = which==='design' ? 'doSearchDesign' : 'doSearchCustomer';
+    const id = which==='design' ? 'doSearchDesign' : which==='brand' ? 'doSearchBrand' : 'doSearchDate';
     const el = document.getElementById(id);
-    if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+    if(!el) return;
+    el.focus();
+    if(which!=='date') el.setSelectionRange(el.value.length, el.value.length);
   }, 0);
 }
 
-function getCustomerOrderText(cname){
-  const rows = bookings.filter(b=>b.customerName===cname && b.status==='dispatched' && !b.trashed)
+function getDatedRows(cname, dk){
+  return bookings.filter(b=>b.customerName===cname && b.status==='dispatched' && !b.trashed && dispatchDateKey(b.dispatchedAt)===dk)
     .sort((a,b)=>(a.designNumber).localeCompare(b.designNumber));
+}
+
+function buildDatedOrderPdf(cname, dk){
+  const rows = getDatedRows(cname, dk);
   const total = rows.reduce((s,b)=>s+b.qty,0);
-  let text = `Order — ${cname}\n\n`;
-  rows.forEach(b=>{
-    text += `Design ${b.designNumber} · ${b.size}${b.brand?(' · '+b.brand):''} · ${b.qty} Set\n`;
-  });
-  text += `\nTotal: ${total} Sets`;
-  return text;
+  const tableRows = rows.map(b=>[b.designNumber, b.colour||'-', b.size, b.brand||'-', String(b.qty)]);
+  return {
+    blob: buildPdfBlob(`Order — ${cname}`, `Subhash Sales Agencies · Dispatch Date: ${dispatchDateLabel(dk)}`, ['Design Number','Colour','Size','Brand','Set'], tableRows, `Total: ${total} Sets`),
+    total
+  };
 }
 
-function shareWhatsApp(cname){
-  const text = getCustomerOrderText(cname);
-  window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+function printOrderDated(cname, dk){
+  const { blob } = buildDatedOrderPdf(cname, dk);
+  if(!blob){ alert(t('pdf_gen_fail')); return; }
+  openPdfBlob(blob, `Order-${cname.replace(/[^a-z0-9]/gi,'_')}-${dk}.pdf`);
 }
 
-function printOrder(cname){
-  const rows = bookings.filter(b=>b.customerName===cname && b.status==='dispatched' && !b.trashed)
-    .sort((a,b)=>(a.designNumber).localeCompare(b.designNumber));
-  const total = rows.reduce((s,b)=>s+b.qty,0);
-  const rowsHtml = rows.map(b=>`<tr><td>${escapeHtml(b.designNumber)}</td><td>${escapeHtml(b.size)}</td><td>${escapeHtml(b.brand||'-')}</td><td>${b.qty}</td></tr>`).join('');
-  const w = window.open('', '_blank');
-  if(!w) return;
-  w.document.write(`
-    <html><head><title>Order - ${escapeHtml(cname)}</title>
-    <style>
-      body{ font-family: Arial, sans-serif; padding:24px; color:#222; }
-      h1{ font-size:20px; margin-bottom:2px; }
-      table{ width:100%; border-collapse:collapse; margin-top:16px; }
-      th, td{ border:1px solid #999; padding:8px; text-align:left; font-size:14px; }
-      tfoot td{ font-weight:bold; }
-    </style>
-    </head><body>
-    <h1>Order — ${escapeHtml(cname)}</h1>
-    <div>Date: ${new Date().toLocaleDateString('en-IN')}</div>
-    <table>
-      <thead><tr><th>Design Number</th><th>Size</th><th>Brand</th><th>Set</th></tr></thead>
-      <tbody>${rowsHtml}</tbody>
-      <tfoot><tr><td colspan="3">Total</td><td>${total}</td></tr></tfoot>
-    </table>
-    </body></html>
-  `);
-  w.document.close();
-  w.focus();
-  w.print();
+async function shareWhatsAppDated(cname, dk){
+  const { blob, total } = buildDatedOrderPdf(cname, dk);
+  if(!blob){ alert(t('pdf_gen_fail')); return; }
+  await sharePdfBlob(blob, `Order-${cname.replace(/[^a-z0-9]/gi,'_')}-${dk}.pdf`, `Order — ${cname}`, `Order — ${cname} (${dispatchDateLabel(dk)}), Total ${total} Sets`);
 }
 
-async function deleteOrder(cname){
+async function deleteOrderDated(cname, dk){
+  if(!canCurrentUserDelete()){ alert(t('delete_not_allowed')); return; }
   let total = 0;
   bookings.forEach(b=>{
-    if(b.customerName===cname && b.status==='dispatched' && !b.trashed){
+    if(b.customerName===cname && b.status==='dispatched' && !b.trashed && dispatchDateKey(b.dispatchedAt)===dk){
       b.trashed = true;
       b.trashedAt = new Date().toISOString();
       b.trashedBy = currentStaff ? { name: currentStaff.name, mobile: currentStaff.mobile } : null;
@@ -855,7 +1666,7 @@ async function deleteOrder(cname){
     }
   });
   await saveData();
-  await logActivity('Order Deleted', `${cname} — ${total} sets`);
+  await logActivity('Order Deleted', `${cname} — ${dispatchDateLabel(dk)} — ${total} sets`);
   render();
 }
 
@@ -873,109 +1684,163 @@ async function restoreOrder(cname){
   render();
 }
 
+async function permanentDeleteOrder(cname){
+  if(!canCurrentUserDelete()){ alert(t('delete_not_allowed')); return; }
+  if(!confirm(`${cname} — ${t('perm_delete_confirm')}`)) return;
+  let total = 0;
+  bookings = bookings.filter(b=>{
+    if(b.customerName===cname && b.trashed){ total += b.qty; return false; }
+    return true;
+  });
+  await saveData();
+  await logActivity('Order Permanently Deleted', `${cname} — ${total} sets removed for good`);
+  render();
+}
+
 /* ---------------- PENDING ORDERS TAB ---------------- */
 
 function renderPendingOrders(main){
   const pendingAll = bookings.filter(b=>b.status==='pending' && !b.trashed);
 
-  if(!pendingAll.length){
-    main.innerHTML = `<div class="card">
-      <h2>Search Party</h2>
-      <input id="pdSearchCustomer" placeholder="Enter customer name" value="${escapeHtml(pdSearchCustomer)}" oninput="onPdSearch(this.value)">
+  const searchBar = `
+    <div class="card">
+      <h2>${t('search_party')}</h2>
+      <input id="pdSearchCustomer" placeholder="${t('enter_customer_name')}" value="${escapeHtml(pdSearchCustomer)}" oninput="onPdSearch('customer', this.value)">
+      <label style="margin-top:10px;">${t('by_brand_name')} (${t('optional_word')})</label>
+      <input id="pdSearchBrand" list="brandList" placeholder="${t('type_brand_name')}" value="${escapeHtml(pdSearchBrand)}" oninput="onPdSearch('brand', this.value)">
+      <label style="margin-top:10px;">${t('by_date')} (${t('optional_word')})</label>
+      <input id="pdSearchDate" type="date" value="${escapeHtml(pdSearchDate)}" oninput="onPdSearch('date', this.value)">
+      ${pdSearchBrand.trim() && canCurrentUserDelete() ? `<button class="action-btn del" style="width:100%;margin-top:12px;" onclick="deleteAllByBrand()">${t('delete_all_brand')} "${escapeHtml(pdSearchBrand.trim())}"</button>` : ''}
     </div>
-    <div class="empty">No pending orders — everything has been dispatched</div>`;
+  `;
+
+  if(!pendingAll.length){
+    main.innerHTML = searchBar + `<div class="empty">${t('no_pending_orders')}</div>`;
     return;
   }
 
-  let customers = [...new Set(pendingAll.map(b=>b.customerName))];
+  let filtered = pendingAll;
+  if(pdSearchBrand.trim()){
+    const bq = pdSearchBrand.trim().toLowerCase();
+    filtered = filtered.filter(b=>(b.brand||'').toLowerCase().includes(bq));
+  }
+  if(pdSearchDate){
+    filtered = filtered.filter(b=>dispatchDateKey(b.orderedAt)===pdSearchDate);
+  }
+
+  let customers = [...new Set(filtered.map(b=>b.customerName))];
   if(pdSearchCustomer.trim()){
     const q = pdSearchCustomer.trim().toLowerCase();
     customers = customers.filter(n=>n.toLowerCase().includes(q));
   }
 
   const cards = customers.map(cname=>{
-    const rows = pendingAll.filter(b=>b.customerName===cname)
+    const rows = filtered.filter(b=>b.customerName===cname)
       .sort((a,b)=>(a.designNumber).localeCompare(b.designNumber));
     const total = rows.reduce((s,b)=>s+b.qty,0);
     const lines = rows.map(b=>
-      `<div class="item-line"><span>Design ${escapeHtml(b.designNumber)} · ${escapeHtml(b.size)}${b.brand?(' · '+escapeHtml(b.brand)):''}</span><span>${b.qty} Set</span></div>`
+      `<div class="item-line"><span>${t('design_word')} ${escapeHtml(b.designNumber)}${b.colour?(' · '+escapeHtml(b.colour)):''} · ${escapeHtml(b.size)}${b.brand?(' · '+escapeHtml(b.brand)):''}</span><span>${b.qty} ${t('set')}</span></div>`
     ).join('');
     return `<div class="cust-card">
-      <div class="cust-head"><span class="name">${escapeHtml(cname)}</span><span class="set-pill pending">${total} Pending</span></div>
+      <div class="cust-head"><span class="name">${escapeHtml(cname)}</span><span class="set-pill pending">${total} ${t('badge_pending')}</span></div>
       ${lines}
+      ${canCurrentUserDelete() ? `<div class="action-row">
+        <button class="action-btn del" onclick="deletePendingOrder('${cname.replace(/'/g,"\\'")}')">${t('delete_btn')}</button>
+      </div>` : ''}
     </div>`;
   }).join('');
 
-  main.innerHTML = `
-    <div class="card">
-      <h2>Search Party</h2>
-      <input id="pdSearchCustomer" placeholder="Enter customer name" value="${escapeHtml(pdSearchCustomer)}" oninput="onPdSearch(this.value)">
-    </div>
-    ${cards || '<div class="empty">No customer found</div>'}
-  `;
+  main.innerHTML = searchBar + (cards || `<div class="empty">${t('no_customer_found')}</div>`);
 }
 
-function onPdSearch(val){
-  pdSearchCustomer = val;
+function onPdSearch(which, val){
+  if(which==='customer') pdSearchCustomer = val;
+  else if(which==='brand') pdSearchBrand = val;
+  else pdSearchDate = val;
   render();
   setTimeout(()=>{
-    const el = document.getElementById('pdSearchCustomer');
-    if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+    const id = which==='customer' ? 'pdSearchCustomer' : which==='brand' ? 'pdSearchBrand' : 'pdSearchDate';
+    const el = document.getElementById(id);
+    if(!el) return;
+    el.focus();
+    if(which!=='date') el.setSelectionRange(el.value.length, el.value.length);
   }, 0);
+}
+
+async function deletePendingOrder(cname){
+  if(!canCurrentUserDelete()){ alert(t('delete_not_allowed')); return; }
+  if(!confirm(`${t('delete_confirm_1')} ${cname}?`)) return;
+  let rows = bookings.filter(b=>b.status==='pending' && !b.trashed && b.customerName===cname);
+  if(pdSearchBrand.trim()){
+    const bq = pdSearchBrand.trim().toLowerCase();
+    rows = rows.filter(b=>(b.brand||'').toLowerCase().includes(bq));
+  }
+  if(pdSearchDate){
+    rows = rows.filter(b=>dispatchDateKey(b.orderedAt)===pdSearchDate);
+  }
+  let total = 0;
+  rows.forEach(b=>{
+    b.trashed = true;
+    b.trashedAt = new Date().toISOString();
+    b.trashedBy = currentStaff ? { name: currentStaff.name, mobile: currentStaff.mobile } : null;
+    total += b.qty;
+  });
+  await saveData();
+  await logActivity('Order Deleted', `${cname} — ${total} sets (from Pending tab)`);
+  render();
+}
+
+async function deleteAllByBrand(){
+  if(!canCurrentUserDelete()){ alert(t('delete_not_allowed')); return; }
+  const bq = pdSearchBrand.trim();
+  if(!bq) return;
+  const bql = bq.toLowerCase();
+  const matches = bookings.filter(b=>b.status==='pending' && !b.trashed && (b.brand||'').toLowerCase().includes(bql));
+  if(!matches.length){ alert(t('no_pending_for_brand')); return; }
+  const custCount = new Set(matches.map(b=>b.customerName)).size;
+  const totalSets = matches.reduce((s,b)=>s+b.qty,0);
+
+  if(!confirm(`${t('bulk_confirm_1')} "${bq}" — ${custCount} ${t('bulk_confirm_customers')}, ${totalSets} ${t('sets')}. ${t('bulk_confirm_continue')}`)) return;
+  if(!confirm(t('bulk_confirm_2'))) return;
+  if(!confirm(`${t('bulk_confirm_3')} ${totalSets} ${t('sets')} — "${bq}"?`)) return;
+
+  matches.forEach(b=>{
+    b.trashed = true;
+    b.trashedAt = new Date().toISOString();
+    b.trashedBy = currentStaff ? { name: currentStaff.name, mobile: currentStaff.mobile } : null;
+  });
+  await saveData();
+  await logActivity('Bulk Order Deleted (Brand)', `${bq} — ${custCount} customers, ${totalSets} sets`);
+  render();
 }
 
 /* ---------------- CUSTOMER-WISE TAB ---------------- */
 
-function getCustomerFullOrderText(cname){
+function buildCustomerOrderPdf(cname){
   const rows = bookings.filter(b=>b.customerName===cname && !b.trashed)
     .sort((a,b)=>(a.designNumber).localeCompare(b.designNumber));
   const total = rows.reduce((s,b)=>s+b.qty,0);
-  let text = `Order — ${cname}\n\n`;
-  rows.forEach(b=>{
-    const statusLabel = b.status==='dispatched' ? 'Dispatched' : 'Pending';
-    text += `Design ${b.designNumber} · ${b.size}${b.brand?(' · '+b.brand):''} · ${b.qty} Set (${statusLabel})\n`;
-  });
-  text += `\nTotal: ${total} Sets`;
-  return text;
+  const tableRows = rows.map(b=>[b.designNumber, b.colour||'-', b.size, b.brand||'-', String(b.qty), b.status==='dispatched'?'Dispatched':'Pending']);
+  return {
+    blob: buildPdfBlob(`Order — ${cname}`, `Subhash Sales Agencies · ${new Date().toLocaleDateString('en-IN')}`, ['Design Number','Colour','Size','Brand','Set','Status'], tableRows, `Total: ${total} Sets`),
+    total
+  };
 }
 
-function shareWhatsAppCustomer(cname){
-  const text = getCustomerFullOrderText(cname);
-  window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
+async function shareWhatsAppCustomer(cname){
+  const { blob, total } = buildCustomerOrderPdf(cname);
+  if(!blob){ alert(t('pdf_gen_fail')); return; }
+  await sharePdfBlob(blob, `Order-${cname.replace(/[^a-z0-9]/gi,'_')}.pdf`, `Order — ${cname}`, `Order — ${cname}, Total ${total} Sets`);
 }
 
 function printCustomerOrder(cname){
-  const rows = bookings.filter(b=>b.customerName===cname && !b.trashed)
-    .sort((a,b)=>(a.designNumber).localeCompare(b.designNumber));
-  const total = rows.reduce((s,b)=>s+b.qty,0);
-  const rowsHtml = rows.map(b=>`<tr><td>${escapeHtml(b.designNumber)}</td><td>${escapeHtml(b.size)}</td><td>${escapeHtml(b.brand||'-')}</td><td>${b.qty}</td><td>${b.status==='dispatched'?'Dispatched':'Pending'}</td></tr>`).join('');
-  const w = window.open('', '_blank');
-  if(!w) return;
-  w.document.write(`
-    <html><head><title>Order - ${escapeHtml(cname)}</title>
-    <style>
-      body{ font-family: Arial, sans-serif; padding:24px; color:#222; }
-      h1{ font-size:20px; margin-bottom:2px; }
-      table{ width:100%; border-collapse:collapse; margin-top:16px; }
-      th, td{ border:1px solid #999; padding:8px; text-align:left; font-size:14px; }
-      tfoot td{ font-weight:bold; }
-    </style>
-    </head><body>
-    <h1>Order — ${escapeHtml(cname)}</h1>
-    <div>Date: ${new Date().toLocaleDateString('en-IN')}</div>
-    <table>
-      <thead><tr><th>Design Number</th><th>Size</th><th>Brand</th><th>Set</th><th>Status</th></tr></thead>
-      <tbody>${rowsHtml}</tbody>
-      <tfoot><tr><td colspan="3">Total</td><td colspan="2">${total}</td></tr></tfoot>
-    </table>
-    </body></html>
-  `);
-  w.document.close();
-  w.focus();
-  w.print();
+  const { blob } = buildCustomerOrderPdf(cname);
+  if(!blob){ alert(t('pdf_gen_fail')); return; }
+  openPdfBlob(blob, `Order-${cname.replace(/[^a-z0-9]/gi,'_')}.pdf`);
 }
 
 async function deleteCustomerOrderFull(cname){
+  if(!canCurrentUserDelete()){ alert(t('delete_not_allowed')); return; }
   let total = 0;
   bookings.forEach(b=>{
     if(b.customerName===cname && !b.trashed){
@@ -1003,8 +1868,18 @@ function renderCustomers(main){
     customers = customers.filter(c=>namesWithBrand.has(c));
   }
 
+  if(customerDateFilter){
+    const namesOnDate = new Set(
+      activeBookings.filter(b=>
+        dispatchDateKey(b.orderedAt)===customerDateFilter ||
+        (b.dispatchedAt && dispatchDateKey(b.dispatchedAt)===customerDateFilter)
+      ).map(b=>b.customerName)
+    );
+    customers = customers.filter(c=>namesOnDate.has(c));
+  }
+
   if(!activeBookings.length){
-    main.innerHTML = `<div class="card"><div class="empty">No order recorded yet</div></div>`;
+    main.innerHTML = `<div class="card"><div class="empty">${t('no_order_yet')}</div></div>`;
     return;
   }
 
@@ -1020,29 +1895,29 @@ function renderCustomers(main){
       const dispatchedRows = rows.filter(b=>b.status==='dispatched');
       const pendingRows = rows.filter(b=>b.status==='pending');
       detail = `<div class="cust-detail">
-        ${dispatchedRows.length ? `<div class="section-label">Ready Goods (Dispatched)</div>` + dispatchedRows.map(b=>`
-          <div class="li"><span>Design ${escapeHtml(b.designNumber)} · ${escapeHtml(b.size)}${b.brand?(' · '+escapeHtml(b.brand)):''} · ${b.qty}</span>
-          <button class="undo-link" onclick="undoDispatch('${b.id}')">Undo</button></div>
+        ${dispatchedRows.length ? `<div class="section-label">${t('ready_goods')}</div>` + dispatchedRows.map(b=>`
+          <div class="li"><span>${t('design_word')} ${escapeHtml(b.designNumber)}${b.colour?(' · '+escapeHtml(b.colour)):''} · ${escapeHtml(b.size)}${b.brand?(' · '+escapeHtml(b.brand)):''} · ${b.qty}</span>
+          <button class="undo-link" onclick="undoDispatch('${b.id}')">${t('undo')}</button></div>
         `).join('') : ''}
-        ${pendingRows.length ? `<div class="section-label">Pending Order</div>` + pendingRows.map(b=>`
-          <div class="li"><span>Design ${escapeHtml(b.designNumber)} · ${escapeHtml(b.size)}${b.brand?(' · '+escapeHtml(b.brand)):''} · ${b.qty}</span><span style="color:var(--rust);">Pending</span></div>
+        ${pendingRows.length ? `<div class="section-label">${t('pending_order')}</div>` + pendingRows.map(b=>`
+          <div class="li"><span>${t('design_word')} ${escapeHtml(b.designNumber)}${b.colour?(' · '+escapeHtml(b.colour)):''} · ${escapeHtml(b.size)}${b.brand?(' · '+escapeHtml(b.brand)):''} · ${b.qty}</span><span style="color:var(--rust);">${t('badge_pending')}</span></div>
         `).join('') : ''}
       </div>`;
     }
 
     return `<div class="cust-card" onclick="toggleCustomer('${cname.replace(/'/g,"\\'")}')" style="cursor:pointer;">
       <div class="cust-head"><span class="name">${escapeHtml(cname)}</span>
-        <span class="set-pill ${pending>0?'pending':'done'}">${pending>0 ? pending+' Pending' : 'Complete'}</span>
+        <span class="set-pill ${pending>0?'pending':'done'}">${pending>0 ? pending+' '+t('badge_pending') : t('complete')}</span>
       </div>
       <div class="summary-row">
-        <span>Total: ${total}</span>
-        <span>Dispatched: ${done}</span>
-        <span>Pending: ${pending}</span>
+        <span>${t('total')}: ${total}</span>
+        <span>${t('dispatched')}: ${done}</span>
+        <span>${t('pending_sets')}: ${pending}</span>
       </div>
       <div class="action-row" onclick="event.stopPropagation();">
-        <button class="action-btn wa" onclick="shareWhatsAppCustomer('${cname.replace(/'/g,"\\'")}')">WhatsApp</button>
-        <button class="action-btn pr" onclick="printCustomerOrder('${cname.replace(/'/g,"\\'")}')">Print</button>
-        <button class="action-btn del" onclick="deleteCustomerOrderFull('${cname.replace(/'/g,"\\'")}')">Delete</button>
+        <button class="action-btn wa" onclick="shareWhatsAppCustomer('${cname.replace(/'/g,"\\'")}')">${t('whatsapp')}</button>
+        <button class="action-btn pr" onclick="printCustomerOrder('${cname.replace(/'/g,"\\'")}')">${t('print')}</button>
+        ${canCurrentUserDelete() ? `<button class="action-btn del" onclick="deleteCustomerOrderFull('${cname.replace(/'/g,"\\'")}')">${t('delete_btn')}</button>` : ''}
       </div>
       ${detail}
     </div>`;
@@ -1050,12 +1925,14 @@ function renderCustomers(main){
 
   main.innerHTML = `
     <div class="card filter-input" style="margin-bottom:14px;">
-      <label>Search Customer</label>
-      <input id="custFilter" placeholder="Type name" value="${escapeHtml(customerFilter)}" oninput="onCustomerFilter(this.value)">
-      <label style="margin-top:10px;">Search by Brand</label>
-      <input id="custBrandFilter" list="brandList" placeholder="Type brand name" value="${escapeHtml(customerBrandFilter)}" oninput="onCustomerBrandFilter(this.value)">
+      <label>${t('search_customer')}</label>
+      <input id="custFilter" placeholder="${t('type_name')}" value="${escapeHtml(customerFilter)}" oninput="onCustomerFilter(this.value)">
+      <label style="margin-top:10px;">${t('search_by_brand')}</label>
+      <input id="custBrandFilter" list="brandList" placeholder="${t('type_brand_name')}" value="${escapeHtml(customerBrandFilter)}" oninput="onCustomerBrandFilter(this.value)">
+      <label style="margin-top:10px;">${t('by_date')}</label>
+      <input id="custDateFilter" type="date" value="${escapeHtml(customerDateFilter)}" oninput="onCustomerDateFilter(this.value)">
     </div>
-    ${cards || '<div class="empty">No customer found</div>'}
+    ${cards || `<div class="empty">${t('no_customer_found')}</div>`}
   `;
 }
 
@@ -1075,6 +1952,12 @@ function onCustomerBrandFilter(val){
     const el = document.getElementById('custBrandFilter');
     if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
   }, 0);
+}
+
+function onCustomerDateFilter(val){
+  customerDateFilter = val;
+  render();
+  setTimeout(()=>{ const el = document.getElementById('custDateFilter'); if(el) el.focus(); }, 0);
 }
 
 function toggleCustomer(cname){
@@ -1100,7 +1983,7 @@ function renderDeletedOrders(main){
   const trashedCustomers = [...new Set(trashedAll.map(b=>b.customerName))];
 
   if(!trashedCustomers.length){
-    main.innerHTML = `<div class="card"><div class="empty">No deleted orders</div></div>`;
+    main.innerHTML = `<div class="card"><div class="empty">${t('no_deleted_orders')}</div></div>`;
     return;
   }
 
@@ -1109,28 +1992,46 @@ function renderDeletedOrders(main){
       .sort((a,b)=>(a.designNumber).localeCompare(b.designNumber));
     const total = rows.reduce((s,b)=>s+b.qty,0);
     const lines = rows.map(b=>
-      `<div class="item-line"><span>Design ${escapeHtml(b.designNumber)} · ${escapeHtml(b.size)}${b.brand?(' · '+escapeHtml(b.brand)):''}</span><span>${b.qty} Set (${b.status==='dispatched'?'Dispatched':'Pending'})</span></div>`
+      `<div class="item-line"><span>${t('design_word')} ${escapeHtml(b.designNumber)}${b.colour?(' · '+escapeHtml(b.colour)):''} · ${escapeHtml(b.size)}${b.brand?(' · '+escapeHtml(b.brand)):''}</span><span>${b.qty} ${t('set')} (${b.status==='dispatched'?t('dispatched'):t('badge_pending')})</span></div>`
     ).join('');
     return `<div class="trash-card">
       <div class="trash-head">
-        <span><b>${escapeHtml(cname)}</b> <span class="subtle">(${total} sets deleted)</span></span>
-        <button class="restore-btn" onclick="restoreOrder('${cname.replace(/'/g,"\\'")}')">Restore</button>
+        <span><b>${escapeHtml(cname)}</b> <span class="subtle">(${total} ${t('sets_deleted')})</span></span>
+        <div class="trash-actions">
+          <button class="restore-btn" onclick="restoreOrder('${cname.replace(/'/g,"\\'")}')">${t('restore')}</button>
+          ${canCurrentUserDelete() ? `<button class="perm-del-btn" onclick="permanentDeleteOrder('${cname.replace(/'/g,"\\'")}')">${t('delete_permanently')}</button>` : ''}
+        </div>
       </div>
       ${lines}
     </div>`;
   }).join('');
 
-  main.innerHTML = `<div class="card"><h2>Deleted Orders (${trashedCustomers.length})</h2></div>${cards}`;
+  main.innerHTML = `<div class="card"><h2>${t('deleted_orders')} (${trashedCustomers.length})</h2></div>${cards}`;
 }
 
 /* ---------------- ACTIVITY LOG TAB ---------------- */
 
 function renderActivity(main){
-  if(!activityLog.length){
-    main.innerHTML = `<div class="card"><div class="empty">No activity recorded yet</div></div>`;
+  let filtered = activityLog;
+  if(activityDateFilter){
+    filtered = filtered.filter(a=>dispatchDateKey(a.timestamp)===activityDateFilter);
+  }
+
+  const filterBar = `
+    <div class="card">
+      <h2>${t('staff_activity')} (${filtered.length})</h2>
+      <label>${t('by_date')}</label>
+      <input id="activityDateFilter" type="date" value="${escapeHtml(activityDateFilter)}" oninput="onActivityDateFilter(this.value)">
+      <button class="secondary" style="margin-top:10px;" onclick="shareActivityWhatsApp()">${t('share_whatsapp_pdf')}</button>
+    </div>
+  `;
+
+  if(!filtered.length){
+    main.innerHTML = filterBar + `<div class="empty">${t('no_activity')}${activityDateFilter ? ' '+t('on_this_date') : ' '+t('yet_word')}</div>`;
     return;
   }
-  const items = activityLog.map(a=>`
+
+  const items = filtered.map(a=>`
     <div class="log-card">
       <div class="log-top">
         <span class="log-staff">${escapeHtml(a.staffName)} <span class="subtle">(${escapeHtml(a.staffMobile)})</span></span>
@@ -1140,9 +2041,27 @@ function renderActivity(main){
       <div class="log-detail">${escapeHtml(a.detail)}</div>
     </div>
   `).join('');
-  main.innerHTML = `<div class="card"><h2>Staff Activity (${activityLog.length})</h2></div>${items}`;
+  main.innerHTML = filterBar + items;
 }
 
+function onActivityDateFilter(val){
+  activityDateFilter = val;
+  render();
+  setTimeout(()=>{ const el = document.getElementById('activityDateFilter'); if(el) el.focus(); }, 0);
+}
+
+async function shareActivityWhatsApp(){
+  let filtered = activityLog;
+  if(activityDateFilter) filtered = filtered.filter(a=>dispatchDateKey(a.timestamp)===activityDateFilter);
+  if(!filtered.length){ alert(t('no_activity_share')); return; }
+  const rows = filtered.map(a=>[a.staffName, fmtTime(a.timestamp), a.action, a.detail]);
+  const title = `${t('staff_activity')}${activityDateFilter ? ' — '+dispatchDateLabel(activityDateFilter) : ''}`;
+  const blob = buildPdfBlob(title, `Subhash Sales Agencies · ${new Date().toLocaleDateString('en-IN')}`, ['Staff','Time','Action','Detail'], rows, null);
+  if(!blob){ alert(t('pdf_gen_fail')); return; }
+  await sharePdfBlob(blob, `activity-log${activityDateFilter?'-'+activityDateFilter:''}.pdf`, title, title);
+}
+
+applyStaticLanguage();
 loadData();
 </script>
 </body>
