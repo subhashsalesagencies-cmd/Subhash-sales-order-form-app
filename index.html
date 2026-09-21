@@ -1756,13 +1756,38 @@ function renderPendingOrders(main){
     return `<div class="cust-card">
       <div class="cust-head"><span class="name">${escapeHtml(cname)}</span><span class="set-pill pending">${total} ${t('badge_pending')}</span></div>
       ${lines}
-      ${canCurrentUserDelete() ? `<div class="action-row">
-        <button class="action-btn del" onclick="deletePendingOrder('${cname.replace(/'/g,"\\'")}')">${t('delete_btn')}</button>
-      </div>` : ''}
+      <div class="action-row">
+        <button class="action-btn wa" onclick="shareWhatsAppPending('${cname.replace(/'/g,"\\'")}')">${t('whatsapp')}</button>
+        <button class="action-btn pr" onclick="printPendingOrder('${cname.replace(/'/g,"\\'")}')">${t('print')}</button>
+        ${canCurrentUserDelete() ? `<button class="action-btn del" onclick="deletePendingOrder('${cname.replace(/'/g,"\\'")}')">${t('delete_btn')}</button>` : ''}
+      </div>
     </div>`;
   }).join('');
 
   main.innerHTML = searchBar + (cards || `<div class="empty">${t('no_customer_found')}</div>`);
+}
+
+function buildPendingOrderPdf(cname){
+  const rows = bookings.filter(b=>b.customerName===cname && b.status==='pending' && !b.trashed)
+    .sort((a,b)=>(a.designNumber).localeCompare(b.designNumber));
+  const total = rows.reduce((s,b)=>s+b.qty,0);
+  const tableRows = rows.map(b=>[b.designNumber, b.colour||'-', b.size, b.brand||'-', String(b.qty)]);
+  return {
+    blob: buildPdfBlob(`${t('pending_order')} — ${cname}`, `Subhash Sales Agencies · ${new Date().toLocaleDateString('en-IN')}`, ['Design Number','Colour','Size','Brand','Set'], tableRows, `${t('total')}: ${total} ${t('sets')}`),
+    total
+  };
+}
+
+async function shareWhatsAppPending(cname){
+  const { blob, total } = buildPendingOrderPdf(cname);
+  if(!blob){ alert(t('pdf_gen_fail')); return; }
+  await sharePdfBlob(blob, `Pending-${cname.replace(/[^a-z0-9]/gi,'_')}.pdf`, `${t('pending_order')} — ${cname}`, `${t('pending_order')} — ${cname}, ${t('total')} ${total} ${t('sets')}`);
+}
+
+function printPendingOrder(cname){
+  const { blob } = buildPendingOrderPdf(cname);
+  if(!blob){ alert(t('pdf_gen_fail')); return; }
+  openPdfBlob(blob, `Pending-${cname.replace(/[^a-z0-9]/gi,'_')}.pdf`);
 }
 
 function onPdSearch(which, val){
