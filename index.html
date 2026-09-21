@@ -430,7 +430,7 @@ const cloudAvailable = !!(SHEET_SCRIPT_URL && SHEET_SCRIPT_URL.startsWith('http'
 
 // Replace this with your own Google OAuth Client ID (see setup notes sent in chat).
 // Until you do, the login screen falls back to a simple name-only entry.
-const GOOGLE_CLIENT_ID = 'YOUR_GOOGLE_CLIENT_ID_HERE.apps.googleusercontent.com';
+const GOOGLE_CLIENT_ID = '436781702541-vojpb19fnlts7m96tirjj028b9gm2brd.apps.googleusercontent.com';
 const googleReady = !!(GOOGLE_CLIENT_ID && !GOOGLE_CLIENT_ID.includes('YOUR_GOOGLE_CLIENT_ID'));
 
 // Only this Google account gets automatic access + the Approvals tab. Everyone
@@ -538,7 +538,7 @@ const I18N = {
     bulk_confirm_3:'FINAL CONFIRMATION — this cannot be undone easily. Delete',
 
     design_word:'Design', pdf_gen_fail:'Could not generate the PDF. Please check your internet connection and try again.',
-    loading_word:'Loading...',
+    loading_word:'Loading...', saving_word:'Saving...',
     lang_toggle:'हिं',
   },
   hi: {
@@ -613,7 +613,7 @@ const I18N = {
     bulk_confirm_3:'आखिरी पुष्टि — यह आसानी से वापस नहीं होगा। डिलीट करें',
 
     design_word:'डिज़ाइन', pdf_gen_fail:'PDF नहीं बन पाई। इंटरनेट चेक करके दोबारा कोशिश करें।',
-    loading_word:'लोड हो रहा है...',
+    loading_word:'लोड हो रहा है...', saving_word:'सेव हो रहा है...',
     lang_toggle:'EN',
   }
 };
@@ -1179,7 +1179,7 @@ function renderBook(main){
     <div class="card">
       <h2>${t('designs_in_order')} (${draftCart.length})</h2>
       ${cartBlocks || `<div class="empty">${t('no_design_added')}</div>`}
-      ${draftCart.length ? `<button class="primary" onclick="saveOrder()">${t('save_order')}</button>` : ''}
+      ${draftCart.length ? `<button class="primary" id="saveOrderBtn" onclick="saveOrder()">${t('save_order')}</button>` : ''}
     </div>
   `;
 }
@@ -1251,7 +1251,11 @@ function addDesignToCart(){
 
 function removeCartDesign(idx){ draftCart.splice(idx,1); render(); }
 
+let isSavingOrder = false; // prevents the same order being saved twice if the button is tapped again before the first save finishes
+
 async function saveOrder(){
+  if(isSavingOrder) return; // a save is already running — ignore the extra tap
+
   const custName = (document.getElementById('custName').value || '').trim();
   const custBrand = (document.getElementById('custBrand').value || '').trim();
   const msg = document.getElementById('bookMsg');
@@ -1259,40 +1263,48 @@ async function saveOrder(){
   if(!custBrand){ msg.innerHTML = `<div class="msg err">${t('enter_brand_err')}</div>`; return; }
   if(!draftCart.length){ return; }
 
-  const now = new Date().toISOString();
-  let totalSets = 0;
-  draftCart.forEach(d=>{
-    d.sizes.forEach(s=>{
-      totalSets += s.qty;
-      bookings.push({
-        id: uid(),
-        customerName: custName,
-        brand: custBrand,
-        designNumber: d.designNumber,
-        colour: d.colour || '',
-        size: s.size,
-        qty: s.qty,
-        status: 'pending',
-        orderedAt: now,
-        dispatchedAt: null,
-        orderedBy: currentStaff ? { name: currentStaff.name, mobile: currentStaff.mobile } : null
+  isSavingOrder = true;
+  const saveBtn = document.getElementById('saveOrderBtn');
+  if(saveBtn){ saveBtn.disabled = true; saveBtn.textContent = t('saving_word'); }
+
+  try{
+    const now = new Date().toISOString();
+    let totalSets = 0;
+    draftCart.forEach(d=>{
+      d.sizes.forEach(s=>{
+        totalSets += s.qty;
+        bookings.push({
+          id: uid(),
+          customerName: custName,
+          brand: custBrand,
+          designNumber: d.designNumber,
+          colour: d.colour || '',
+          size: s.size,
+          qty: s.qty,
+          status: 'pending',
+          orderedAt: now,
+          dispatchedAt: null,
+          orderedBy: currentStaff ? { name: currentStaff.name, mobile: currentStaff.mobile } : null
+        });
       });
     });
-  });
-  await saveData();
+    await saveData();
 
-  const count = draftCart.length;
-  await logActivity('Order Booked', `${custName}${custBrand ? ' ('+custBrand+')' : ''} — ${count} design(s), ${totalSets} sets`);
+    const count = draftCart.length;
+    await logActivity('Order Booked', `${custName}${custBrand ? ' ('+custBrand+')' : ''} — ${count} design(s), ${totalSets} sets`);
 
-  draftCart = [];
-  draftCustomer = '';
-  draftBrand = '';
-  tempDesignNumber = '';
-  tempColour = '';
-  tempSizes = [];
-  render();
-  const m2 = document.getElementById('bookMsg');
-  if(m2) m2.innerHTML = `<div class="msg ok">${count} ${t('designs_saved')}</div>`;
+    draftCart = [];
+    draftCustomer = '';
+    draftBrand = '';
+    tempDesignNumber = '';
+    tempColour = '';
+    tempSizes = [];
+    render();
+    const m2 = document.getElementById('bookMsg');
+    if(m2) m2.innerHTML = `<div class="msg ok">${count} ${t('designs_saved')}</div>`;
+  } finally {
+    isSavingOrder = false;
+  }
 }
 
 /* ---------------- ARTICLE (DISPATCH) SEARCH TAB ---------------- */
