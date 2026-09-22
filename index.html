@@ -752,10 +752,29 @@ async function storageSet(key, value){
   catch(e){ console.error('local storage failed', e); }
 }
 
+// Google Sheets auto-converts cell text that LOOKS like a number (e.g. an
+// article/design number such as "101") into an actual JS number when the
+// data is read back. Every part of this app assumes these fields are text
+// and calls string methods on them (.toLowerCase(), .localeCompare(), etc).
+// If even one booking comes back as a number, those calls throw, the render
+// stops partway through, and the screen freezes on stale content — which
+// looks like "tabs stopped working" even though the tap itself worked fine.
+// Forcing these fields back to strings the moment data is loaded fixes this
+// for good, regardless of what type Sheets decides to hand back.
+function normalizeBookingFields_(arr){
+  if(!arr) return;
+  arr.forEach(function(b){
+    ['designNumber','customerName','brand','colour','size'].forEach(function(field){
+      if(b[field] !== undefined && b[field] !== null) b[field] = String(b[field]);
+    });
+  });
+}
+
 async function loadData(){
   try{
     const v = await storageGet('bookings');
     bookings = v ? JSON.parse(v) : [];
+    normalizeBookingFields_(bookings);
   }catch(e){ bookings = []; }
   try{
     const v2 = await storageGet('activityLog');
