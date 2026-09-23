@@ -20,6 +20,7 @@
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root{
     --navy:#1656A6;
@@ -60,6 +61,16 @@
     margin:0;
   }
   .topbar-right{ display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .sync-badge{
+    font-size:11.5px;
+    font-weight:600;
+    padding:4px 9px;
+    border-radius:20px;
+    white-space:nowrap;
+    background:rgba(255,255,255,0.15);
+    color:#fff;
+  }
+  .sync-badge:empty{ display:none; }
   .closing-badge{
     background:#FFD166;
     color:#3A2A0F;
@@ -404,6 +415,7 @@ const SIZE_PRESETS = ['20/24','26/30','32/36','18/22','24/28','30/34','9/24','2/
 
 let dispatchQuery = '';
 let dispatchBrandQuery = '';
+let dispatchBrandView = 'summary';  // 'summary' = size-wise totals, 'detail' = per-customer lines
 let dispatchFromDate = ''; // yyyy-mm-dd
 let dispatchToDate = '';   // yyyy-mm-dd
 let selectedDesign = null;   // exact design chosen from the "select one" list, so it's never re-matched against other designs that merely share the same digits
@@ -715,19 +727,22 @@ async function sharePdfBlob(blob, filename, shareTitle, shareText){
   }
   // Fallback for browsers without file-sharing support (mostly desktop):
   // download the PDF, then open WhatsApp so it can be attached manually.
+  // The file is already named after the customer (e.g. "Order-Amit.pdf"),
+  // and we call that name out in the message so it's easy to spot in the
+  // Downloads folder when attaching it in WhatsApp Web/Desktop.
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url; a.download = filename;
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(()=>URL.revokeObjectURL(url), 60000);
-  window.open(`https://wa.me/?text=${encodeURIComponent(shareText + '\n\n(PDF has been downloaded to your device — please attach it here)')}`, '_blank');
+  window.open(`https://wa.me/?text=${encodeURIComponent(shareText + `\n\n📎 PDF downloaded as "${filename}" — please attach it from your Downloads folder here.`)}`, '_blank');
 }
 
 // Primary storage: Google Sheets (via Apps Script Web App) — syncs across all staff devices.
 // Backup storage: this browser's localStorage — used if the Sheets call fails
 // (e.g. no internet at that moment), so nothing gets lost.
 async function storageGet(key){
-  if(cloudAvailable){
+  if(cloudAvailable && navigator.onLine){
     try{
       const res = await fetch(`${SHEET_SCRIPT_URL}?key=${encodeURIComponent(key)}`);
       const data = await res.json();
@@ -739,17 +754,80 @@ async function storageGet(key){
   catch(e){ return null; }
 }
 async function storageSet(key, value){
-  if(cloudAvailable){
+  // Always save locally first — instant, and this is what keeps the app
+  // fully usable offline (orders, dispatches, everything).
+  try{ localStorage.setItem('ssa_'+key, value); }
+  catch(e){ console.error('local storage failed', e); }
+
+  if(cloudAvailable && navigator.onLine){
     try{
       await fetch(SHEET_SCRIPT_URL, {
         method:'POST',
         headers: {'Content-Type':'text/plain;charset=utf-8'},
         body: JSON.stringify({ key, value })
       });
-    }catch(e){ console.error('Sheet save failed, saved locally only', e); }
+      markKeySynced_(key);
+      return;
+    }catch(e){ console.error('Sheet save failed, will retry when back online', e); }
   }
-  try{ localStorage.setItem('ssa_'+key, value); }
-  catch(e){ console.error('local storage failed', e); }
+  // No internet (or the request failed) — remember this key needs syncing,
+  // and try again automatically once we're back online.
+  markKeyDirty_(key);
+}
+
+/* ---------------- OFFLINE QUEUE: remembers which keys still need to reach
+   Google Sheets, and pushes them the moment internet is back. This is what
+   lets the app be used with no signal at all — orders save instantly to
+   this device, then quietly catch up to the cloud later. ---------------- */
+let dirtyKeys = [];
+try{ dirtyKeys = JSON.parse(localStorage.getItem('ssa_dirty_keys') || '[]'); }catch(e){ dirtyKeys = []; }
+
+function markKeyDirty_(key){
+  if(!dirtyKeys.includes(key)) dirtyKeys.push(key);
+  try{ localStorage.setItem('ssa_dirty_keys', JSON.stringify(dirtyKeys)); }catch(e){}
+  updateSyncBadge_();
+}
+function markKeySynced_(key){
+  if(dirtyKeys.includes(key)){
+    dirtyKeys = dirtyKeys.filter(k=>k!==key);
+    try{ localStorage.setItem('ssa_dirty_keys', JSON.stringify(dirtyKeys)); }catch(e){}
+  }
+  updateSyncBadge_();
+}
+
+let isFlushing_ = false;
+async function flushDirtyKeys_(){
+  if(isFlushing_ || !cloudAvailable || !navigator.onLine || !dirtyKeys.length) return;
+  isFlushing_ = true;
+  try{
+    for(const key of [...dirtyKeys]){
+      try{
+        const value = localStorage.getItem('ssa_'+key);
+        if(value === null){ markKeySynced_(key); continue; }
+        await fetch(SHEET_SCRIPT_URL, {
+          method:'POST',
+          headers: {'Content-Type':'text/plain;charset=utf-8'},
+          body: JSON.stringify({ key, value })
+        });
+        markKeySynced_(key);
+      }catch(e){ console.error('Retry sync failed for', key, e); }
+    }
+  } finally { isFlushing_ = false; }
+}
+
+function updateSyncBadge_(){
+  const el = document.getElementById('syncBadge');
+  if(!el) return;
+  if(!navigator.onLine){
+    el.textContent = '🔴 Offline — saving on this device';
+    el.className = 'sync-badge offline';
+  } else if(dirtyKeys.length){
+    el.textContent = '🟡 Syncing…';
+    el.className = 'sync-badge syncing';
+  } else {
+    el.textContent = '🟢 Synced';
+    el.className = 'sync-badge synced';
+  }
 }
 
 // Google Sheets auto-converts cell text that LOOKS like a number (e.g. an
@@ -791,6 +869,52 @@ async function loadData(){
   await purgeOldRecords();
   loaded = true;
   render();
+  updateSyncBadge_();
+  startAutoRefresh_();
+}
+
+/* ---------------- AUTO-REFRESH: quietly re-checks Google Sheets every 20s
+   so everyone sees each other's updates without hitting refresh, and syncs
+   any offline changes the moment internet is back. Skips refreshing while
+   someone is actively filling the Order form, so it never interrupts typing. */
+let autoRefreshTimer_ = null;
+function startAutoRefresh_(){
+  if(autoRefreshTimer_) return;
+  autoRefreshTimer_ = setInterval(async ()=>{
+    if(!navigator.onLine || document.hidden) return;
+    await flushDirtyKeys_();
+    if(currentTab === 'book') return;
+    await silentRefresh_();
+  }, 20000);
+
+  window.addEventListener('online', async ()=>{
+    updateSyncBadge_();
+    await flushDirtyKeys_();
+    if(currentTab !== 'book') await silentRefresh_();
+  });
+  window.addEventListener('offline', updateSyncBadge_);
+
+  document.addEventListener('visibilitychange', async ()=>{
+    if(!document.hidden && navigator.onLine){
+      await flushDirtyKeys_();
+      if(currentTab !== 'book') await silentRefresh_();
+    }
+  });
+}
+
+async function silentRefresh_(){
+  if(!currentStaff) return;
+  try{
+    const v = await storageGet('bookings');
+    const newBookings = v ? JSON.parse(v) : [];
+    normalizeBookingFields_(newBookings);
+    bookings = newBookings;
+    const v2 = await storageGet('activityLog');
+    activityLog = v2 ? JSON.parse(v2) : [];
+    const v3 = await storageGet('staffApprovals');
+    staffApprovals = v3 ? JSON.parse(v3) : [];
+    render();
+  }catch(e){ console.error('Auto-refresh failed', e); }
 }
 
 // Any order (pending or dispatched) placed more than 12 months ago is removed
@@ -877,9 +1001,11 @@ function renderTopbarRight(){
   if(!currentStaff){ el.innerHTML = ''; return; }
   const pending = bookings.filter(b=>b.status==='pending' && !b.trashed).reduce((s,b)=>s+b.qty,0);
   el.innerHTML = `
+    <span id="syncBadge" class="sync-badge"></span>
     <span class="closing-badge">${t('pending_sets')}: ${pending} ${t('sets')}</span>
     <span class="staff-badge">👤 ${escapeHtml(currentStaff.name)} <button onclick="logoutStaff()">${t('switch_btn')}</button></span>
   `;
+  updateSyncBadge_();
 }
 
 function updateDatalists(){
@@ -1463,9 +1589,33 @@ function renderDispatch(main){
         const showColourLabels = colourKeys.length > 1 || (colourKeys.length===1 && colourKeys[0] !== '');
 
         const colourSections = colourKeys.map(colour=>{
-          const lines = colourGroups[colour].map(b=>{
-            const done = b.status==='dispatched';
-            return `<div class="item-line"><span>${escapeHtml(b.customerName)} · ${escapeHtml(b.size)}</span><span>${b.qty} ${t('set')} ${done?'✓':''}</span></div>`;
+          if(dispatchBrandView === 'detail'){
+            // Per-customer detail, as it was before — each customer's own line.
+            const lines = colourGroups[colour].map(b=>{
+              const done = b.status==='dispatched';
+              return `<div class="item-line"><span>${escapeHtml(b.customerName)} · ${escapeHtml(b.size)}</span><span>${b.qty} ${t('set')} ${done?'✓':''}</span></div>`;
+            }).join('');
+            const label = showColourLabels ? `<div class="colour-label">${escapeHtml(colour || t('no_colour'))}</div>` : '';
+            return `${label}${lines}`;
+          }
+          // Size-wise total: sum every customer's qty for this article+colour+size
+          // together, instead of listing each customer's line separately, so
+          // staff can see at a glance how many sets of each size are on order.
+          const sizeTotals = {};
+          const sizeStatus = {};
+          colourGroups[colour].forEach(b=>{
+            const sz = b.size || '-';
+            sizeTotals[sz] = (sizeTotals[sz] || 0) + b.qty;
+            if(!sizeStatus[sz]) sizeStatus[sz] = { pending:0, dispatched:0 };
+            sizeStatus[sz][b.status==='dispatched' ? 'dispatched' : 'pending'] += b.qty;
+          });
+          const sizeKeys = Object.keys(sizeTotals).sort((a,b)=>a.localeCompare(b));
+          const lines = sizeKeys.map(sz=>{
+            const st = sizeStatus[sz];
+            let statusNote = '';
+            if(st.dispatched && st.pending) statusNote = ` (${st.dispatched} ${t('dispatched')}, ${st.pending} ${t('badge_pending')})`;
+            else if(st.dispatched) statusNote = ` (${t('dispatched')} ✓)`;
+            return `<div class="item-line"><span>${escapeHtml(sz)}</span><span>${sizeTotals[sz]} ${t('set')}${statusNote}</span></div>`;
           }).join('');
           const label = showColourLabels ? `<div class="colour-label">${escapeHtml(colour || t('no_colour'))}</div>` : '';
           return `${label}${lines}`;
@@ -1481,7 +1631,14 @@ function renderDispatch(main){
         <div class="card">
           <div class="section-label" style="margin-top:0;">${t('brand_overview')}: ${escapeHtml(dispatchBrandQuery.trim())}</div>
           <div style="font-size:13px;color:#5b6472;margin-bottom:10px;">${designKeys.length} ${t('articles_word')} · ${totalSets} ${t('sets')}</div>
-          <button class="secondary" onclick="printBrandOverview()">${t('print')} PDF</button>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+            <button class="secondary" style="${dispatchBrandView==='summary'?'background:var(--navy);color:#fff;':''}" onclick="setDispatchBrandView('summary')">Size-wise Total</button>
+            <button class="secondary" style="${dispatchBrandView==='detail'?'background:var(--navy);color:#fff;':''}" onclick="setDispatchBrandView('detail')">Customer-wise Detail</button>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="secondary" onclick="printBrandOverview()">${t('print')} PDF</button>
+            <button class="secondary" onclick="downloadBrandExcel()">Download Excel</button>
+          </div>
         </div>
         ${articleCards}
       `;
@@ -1501,6 +1658,11 @@ function renderDispatch(main){
     </div>
     ${resultsHtml}
   `;
+}
+
+function setDispatchBrandView(view){
+  dispatchBrandView = view;
+  render();
 }
 
 function onDispatchDateRange(which, val){
@@ -1524,6 +1686,40 @@ function printBrandOverview(){
   const blob = buildPdfBlob(`${t('brand_overview')}: ${bq}${dateNote}`, `Subhash Sales Agencies · ${new Date().toLocaleDateString('en-IN')}`, ['Article','Colour','Customer','Size','Set','Status'], rows, `${t('total')}: ${totalSets} ${t('sets')}`);
   if(!blob){ alert(t('pdf_gen_fail')); return; }
   openPdfBlob(blob, `Brand-${bq.replace(/[^a-z0-9]/gi,'_')}.pdf`);
+}
+
+function downloadBrandExcel(){
+  const bq = dispatchBrandQuery.trim();
+  if(!bq) return;
+  if(!window.XLSX){ alert(t('pdf_gen_fail')); return; }
+  const bql = bq.toLowerCase();
+  const matches = bookings.filter(b=>!b.trashed && (b.brand||'').toLowerCase().includes(bql) && inDispatchDateRange(b.orderedAt));
+  if(!matches.length){ alert(t('no_brand_orders')); return; }
+
+  // Aggregate by Article + Colour + Size, same totals shown on screen, plus
+  // a break-out of how many of those sets are pending vs already dispatched.
+  const agg = {};
+  matches.forEach(b=>{
+    const key = b.designNumber + '||' + (b.colour||'-') + '||' + (b.size||'-');
+    if(!agg[key]) agg[key] = { designNumber:b.designNumber, colour:b.colour||'-', size:b.size||'-', total:0, pending:0, dispatched:0 };
+    agg[key].total += b.qty;
+    agg[key][b.status==='dispatched' ? 'dispatched' : 'pending'] += b.qty;
+  });
+  const rows = Object.values(agg).sort((a,b)=>
+    a.designNumber.localeCompare(b.designNumber) || a.colour.localeCompare(b.colour) || a.size.localeCompare(b.size)
+  );
+
+  const sheetData = [['Article','Colour','Size','Total Sets','Pending','Dispatched']];
+  rows.forEach(r=> sheetData.push([r.designNumber, r.colour, r.size, r.total, r.pending, r.dispatched]));
+  const totalSets = matches.reduce((s,b)=>s+b.qty,0);
+  sheetData.push([]);
+  sheetData.push(['', '', '', 'Total', '', totalSets]);
+
+  const ws = XLSX.utils.aoa_to_sheet(sheetData);
+  ws['!cols'] = [{wch:12},{wch:14},{wch:12},{wch:12},{wch:10},{wch:12}];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Brand Overview');
+  XLSX.writeFile(wb, `Brand-${bq.replace(/[^a-z0-9]/gi,'_')}.xlsx`);
 }
 
 function onDispatchBrandSearch(val){
@@ -2162,6 +2358,15 @@ async function shareActivityWhatsApp(){
 
 applyStaticLanguage();
 loadData();
+
+// Registers the offline service worker so the app itself (HTML/CSS/JS) can
+// load with no internet at all — the data layer above already handles
+// working offline and syncing back once a connection returns.
+if('serviceWorker' in navigator){
+  window.addEventListener('load', ()=>{
+    navigator.serviceWorker.register('sw.js').catch(e=>console.error('Service worker registration failed', e));
+  });
+}
 </script>
 </body>
 </html>
