@@ -132,6 +132,16 @@
     outline-offset:1px;
     border-color:var(--navy);
   }
+  /* Colour-coded fields on the Order form, so Customer / Brand / Design /
+     Size are each instantly recognisable at a glance while taking an order. */
+  .field-navy{ border-left:4px solid var(--navy) !important; background:#F5F9FF !important; }
+  .field-sage{ border-left:4px solid var(--sage) !important; background:#F3FAF6 !important; }
+  .field-rust{ border-left:4px solid var(--rust) !important; background:#FDF6F3 !important; }
+  .field-mustard{ border-left:4px solid var(--mustard) !important; background:#F2F8FF !important; }
+  .label-dot{
+    display:inline-block; width:7px; height:7px; border-radius:50%;
+    margin-right:6px; vertical-align:middle;
+  }
   .row{ display:flex; gap:8px; margin-bottom:10px; align-items:flex-end; }
   .row > *{ flex:1; }
   .row .btn-inline{ flex:none; width:52px; }
@@ -1344,25 +1354,25 @@ function renderBook(main){
 
   main.innerHTML = `
     <div class="card">
-      <h2>${t('customer_name')}</h2>
-      <input id="custName" list="customerList" placeholder="${t('enter_customer_name')}" value="${escapeHtml(draftCustomer)}" oninput="draftCustomer=this.value">
-      <label style="margin-top:10px;">${t('brand_name')} *</label>
-      <input id="custBrand" list="brandList" placeholder="${t('enter_brand_name')}" value="${escapeHtml(draftBrand)}" oninput="draftBrand=this.value">
+      <h2><span class="label-dot" style="background:var(--navy);"></span>${t('customer_name')}</h2>
+      <input id="custName" class="field-navy" list="customerList" placeholder="${t('enter_customer_name')}" value="${escapeHtml(draftCustomer)}" oninput="draftCustomer=this.value">
+      <label style="margin-top:10px;"><span class="label-dot" style="background:var(--sage);"></span>${t('brand_name')} *</label>
+      <input id="custBrand" class="field-sage" list="brandList" placeholder="${t('enter_brand_name')}" value="${escapeHtml(draftBrand)}" oninput="draftBrand=this.value">
     </div>
 
     <div class="card">
       <h2>${t('add_design')}</h2>
       <div id="bookMsg"></div>
-      <label>${t('design_number')}</label>
-      <input id="designNo" list="designList" placeholder="${t('design_ph')}" value="${escapeHtml(tempDesignNumber)}" oninput="tempDesignNumber=this.value">
+      <label><span class="label-dot" style="background:var(--rust);"></span>${t('design_number')}</label>
+      <input id="designNo" class="field-rust" list="designList" placeholder="${t('design_ph')}" value="${escapeHtml(tempDesignNumber)}" oninput="tempDesignNumber=this.value">
 
       <label style="margin-top:10px;">${t('colour_optional')}</label>
       <input id="designColour" placeholder="${t('colour_ph')}" value="${escapeHtml(tempColour)}" oninput="tempColour=this.value">
 
-      <label style="margin-top:10px;">${t('size')}</label>
+      <label style="margin-top:10px;"><span class="label-dot" style="background:var(--mustard);"></span>${t('size')}</label>
       <div class="row">
         <div class="size-suggest-wrap" id="sizeSuggestWrap">
-          <input id="sizeVal" placeholder="${t('size_ph')}" autocomplete="off" oninput="filterSizeSuggestions()" onfocus="showSizeSuggestions()" onkeydown="if(event.key==='Enter'){event.preventDefault();addTempSize();}">
+          <input id="sizeVal" class="field-mustard" placeholder="${t('size_ph')}" autocomplete="off" oninput="filterSizeSuggestions()" onfocus="showSizeSuggestions()" onkeydown="if(event.key==='Enter'){event.preventDefault();addTempSize();}">
           <div id="sizeSuggestions" class="size-suggest-dropdown" style="display:none;"></div>
         </div>
         <div style="max-width:80px;">
