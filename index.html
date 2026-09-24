@@ -1622,16 +1622,45 @@ function renderDispatch(main){
     }).join('') : `<div class="empty">${t('no_article_found')}</div>`;
 
     // Parties whose order for this article was moved to Deleted — shown
-    // greyed out and non-clickable, just as a record that they existed,
-    // so staff aren't confused about where an order went.
+    // greyed out (like a fully-dispatched card) with their actual size/qty
+    // details still visible, just non-clickable. Shown even if the same
+    // customer also has a separate active order for this article on a
+    // different date — the deleted one still appears as its own blurred card.
     const trashedMatches = bookings.filter(b=>b.trashed && b.designNumber===exactDesign &&
       (!hasBrandQuery || (b.brand||'').toLowerCase().includes(dispatchBrandQuery.trim().toLowerCase())));
-    const trashedCustomers = [...new Set(trashedMatches.map(b=>b.customerName))].filter(cname=>!customers.includes(cname));
-    const trashedCardsHtml = trashedCustomers.map(cname=>`
-      <div class="cust-card" style="opacity:0.4;filter:grayscale(70%);pointer-events:none;user-select:none;">
-        <div class="cust-head"><span class="name">${escapeHtml(cname)}</span><span class="set-pill" style="background:#e2e2e2;color:#777;">${t('nav_deleted')}</span></div>
-      </div>
-    `).join('');
+    const trashedCustomerNames = [...new Set(trashedMatches.map(b=>b.customerName))];
+    const trashedCardsHtml = trashedCustomerNames.map(cname=>{
+      const rows = trashedMatches.filter(b=>b.customerName===cname);
+      const orderDates = [...new Set(rows.map(b=>dispatchDateKey(b.orderedAt)))]
+        .sort((a,b)=>b.localeCompare(a))
+        .map(dk=>dispatchDateLabel(dk));
+
+      const groups = {};
+      rows.forEach(b=>{
+        const key = (b.colour||'') + '||' + (b.brand||'');
+        if(!groups[key]) groups[key] = [];
+        groups[key].push(b);
+      });
+      const groupKeys = Object.keys(groups);
+      const showGroupLabels = groupKeys.length > 1 || (groupKeys.length===1 && groupKeys[0] !== '||');
+      const groupsHtml = groupKeys.map(key=>{
+        const [colour, brand] = key.split('||');
+        const chips = groups[key].map(b=>`<span class="size-btn done">${escapeHtml(b.size)} · ${b.qty}</span>`).join('');
+        let labelText = '';
+        if(colour && brand) labelText = `${colour} · ${brand}`;
+        else if(colour) labelText = colour;
+        else if(brand) labelText = brand;
+        else labelText = t('no_colour_brand');
+        const label = showGroupLabels ? `<div class="colour-label">${escapeHtml(labelText)}</div>` : '';
+        return `${label}<div>${chips}</div>`;
+      }).join('');
+
+      return `
+      <div class="cust-card" style="opacity:0.45;filter:grayscale(65%);pointer-events:none;user-select:none;">
+        <div class="cust-head"><span class="name">${escapeHtml(cname)} <span style="font-size:11.5px;font-weight:500;color:#8a93a0;margin-left:6px;">${orderDates.map(escapeHtml).join(', ')}</span></span><span class="set-pill" style="background:#e2e2e2;color:#777;">${t('nav_deleted')}</span></div>
+        ${groupsHtml}
+      </div>`;
+    }).join('');
 
     const allColours = [...new Set(matches.map(b=>b.colour).filter(Boolean))];
     const allBrands = [...new Set(matches.map(b=>b.brand).filter(Boolean))];
