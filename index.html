@@ -464,6 +464,39 @@ function canCurrentUserDelete(){
   return !!(entry && entry.canDelete);
 }
 
+// Tabs a staff member does NOT see by default — the owner must explicitly
+// switch each one on from the Approvals screen. Order (book) and Article
+// (dispatch) are always visible to any approved staff, since they need
+// those two to take orders day-to-day.
+const RESTRICTABLE_TABS = [
+  { key:'dispatchedOrders', label:'Dispatched' },
+  { key:'pendingOrders',    label:'Pending' },
+  { key:'customers',        label:'Customers' },
+  { key:'deletedOrders',    label:'Deleted' },
+  { key:'activity',         label:'Activity' }
+];
+
+function canAccessTab(tabKey){
+  if(!currentStaff) return false;
+  if(tabKey === 'book' || tabKey === 'dispatch') return true; // always allowed
+  if(!currentStaff.mobile) return true; // legacy name-only login predates this system
+  if(currentStaff.mobile.toLowerCase() === OWNER_EMAIL.toLowerCase()) return true;
+  if(tabKey === 'approvals') return false; // owner-only, handled separately
+  const entry = staffApprovals.find(s=>s.email === currentStaff.mobile);
+  return !!(entry && Array.isArray(entry.allowedTabs) && entry.allowedTabs.includes(tabKey));
+}
+
+async function toggleTabPermission(email, tabKey){
+  const s = staffApprovals.find(x=>x.email===email);
+  if(!s) return;
+  if(!Array.isArray(s.allowedTabs)) s.allowedTabs = [];
+  const has = s.allowedTabs.includes(tabKey);
+  s.allowedTabs = has ? s.allowedTabs.filter(t=>t!==tabKey) : [...s.allowedTabs, tabKey];
+  await saveApprovals();
+  await logActivity(has ? 'Tab Access Removed' : 'Tab Access Granted', `${s.name} (${email}) — ${tabKey}`);
+  render();
+}
+
 function uid(){ return 'b' + Math.random().toString(36).slice(2,10); }
 function escapeHtml(str){
   return String(str).replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
@@ -510,6 +543,7 @@ const I18N = {
     add_design:'Add Design', design_number:'Design Number', design_ph:'e.g. 2145',
     colour_optional:'Colour (optional)', colour_ph:'e.g. Navy Purple',
     size:'Size', size_ph:'Tap to choose or type a size', no_size_added:'No size added yet',
+    size_add_hint:'Tap + to add each size straight into the order below',
     add_design_btn:'Add This Design to Order', designs_in_order:'Designs in This Order',
     no_design_added:'No design added yet', save_order:'Save Order', remove:'Remove',
     enter_design_err:'Please enter design number', add_size_err:'Add at least one size',
@@ -585,6 +619,7 @@ const I18N = {
     add_design:'डिज़ाइन जोड़ें', design_number:'डिज़ाइन नंबर', design_ph:'जैसे 2145',
     colour_optional:'कलर (वैकल्पिक)', colour_ph:'जैसे नेवी पर्पल',
     size:'साइज़', size_ph:'चुनने के लिए टैप करें या साइज़ लिखें', no_size_added:'अभी कोई साइज़ नहीं जोड़ा गया',
+    size_add_hint:'हर साइज़ जोड़ने के लिए + दबाएं, सीधा नीचे ऑर्डर में जुड़ जाएगा',
     add_design_btn:'यह डिज़ाइन ऑर्डर में जोड़ें', designs_in_order:'इस ऑर्डर में डिज़ाइन',
     no_design_added:'अभी कोई डिज़ाइन नहीं जोड़ा गया', save_order:'ऑर्डर सेव करें', remove:'हटाएं',
     enter_design_err:'कृपया डिज़ाइन नंबर लिखें', add_size_err:'कम से कम एक साइज़ जोड़ें',
@@ -1035,6 +1070,16 @@ function render(){
   if(approvalsBtn) approvalsBtn.style.display = isOwner ? 'flex' : 'none';
   if(currentTab === 'approvals' && !isOwner) currentTab = 'book';
 
+  // Restrict tabs per-staff: owner sees everything; a staff member only
+  // sees Order + Article by default, plus whatever tabs the owner has
+  // explicitly switched on for them from the Approvals screen.
+  document.querySelectorAll('.navbtn[data-tab]').forEach(btn=>{
+    const tab = btn.dataset.tab;
+    if(tab === 'approvals') return; // handled above
+    btn.style.display = canAccessTab(tab) ? 'flex' : 'none';
+  });
+  if(!canAccessTab(currentTab)) currentTab = 'book';
+
   renderTopbarRight();
   updateDatalists();
   console.log('[render] currentTab =', currentTab);
@@ -1202,19 +1247,28 @@ function renderApprovals(main){
     </div>
   `).join('') : `<div class="empty">${t('no_pending_requests')}</div>`;
 
-  const approvedHtml = approved.length ? approved.map(s=>`
+  const approvedHtml = approved.length ? approved.map(s=>{
+    const allowedTabs = Array.isArray(s.allowedTabs) ? s.allowedTabs : [];
+    const tabToggles = RESTRICTABLE_TABS.map(rt=>{
+      const on = allowedTabs.includes(rt.key);
+      return `<button class="chip" style="cursor:pointer;border:1px solid ${on ? 'var(--navy)' : '#ccc'};background:${on ? 'var(--navy)' : '#fff'};color:${on ? '#fff' : '#555'};" onclick="toggleTabPermission('${s.email.replace(/'/g,"\\'")}','${rt.key}')">${on ? '✓ ' : ''}${rt.label}</button>`;
+    }).join(' ');
+    return `
     <div class="cust-card">
       <div class="cust-head"><span class="name">${escapeHtml(s.name)}</span><span class="set-pill done">${t('badge_approved')}</span></div>
       <div style="font-size:13px;color:#5b6472;">${escapeHtml(s.email)}</div>
       <div style="margin-top:6px;">
         <span class="set-pill ${s.canDelete ? 'done' : 'pending'}">${s.canDelete ? t('delete_allowed') : t('delete_blocked')}</span>
       </div>
-      <div class="action-row">
+      <div style="font-size:12px;color:#5b6472;margin-top:10px;margin-bottom:4px;">Tabs this staff can see (Order + Article always visible):</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">${tabToggles}</div>
+      <div class="action-row" style="margin-top:10px;">
         <button class="action-btn ${s.canDelete ? 'del' : 'wa'}" onclick="toggleDeletePermission('${s.email.replace(/'/g,"\\'")}')">${s.canDelete ? t('block_delete') : t('allow_delete')}</button>
         <button class="action-btn del" onclick="revokeStaff('${s.email.replace(/'/g,"\\'")}')">${t('revoke_access')}</button>
       </div>
     </div>
-  `).join('') : `<div class="empty">${t('no_approved_staff')}</div>`;
+  `;
+  }).join('') : `<div class="empty">${t('no_approved_staff')}</div>`;
 
   const rejectedHtml = rejected.length ? rejected.map(s=>`
     <div class="cust-card">
@@ -1241,6 +1295,7 @@ async function approveStaff(email){
   s.status = 'approved';
   s.approvedAt = new Date().toISOString();
   if(s.canDelete === undefined) s.canDelete = false; // owner must explicitly grant delete rights
+  if(!Array.isArray(s.allowedTabs)) s.allowedTabs = []; // owner must explicitly switch tabs on
   await saveApprovals();
   await logActivity('Staff Approved', `${s.name} (${email})`);
   render();
@@ -1279,15 +1334,13 @@ async function revokeStaff(email){
 
 function renderBook(main){
   const cartBlocks = draftCart.map((d, idx)=>{
-    const chips = d.sizes.map(s=>`<span class="chip">${escapeHtml(s.size)} · ${s.qty}</span>`).join('');
+    const chips = d.sizes.map((s,si)=>`<span class="chip">${escapeHtml(s.size)} · ${s.qty} <button class="x" onclick="removeCartSize(${idx},${si})">×</button></span>`).join('');
     return `<div class="design-block">
       <div class="dhead"><span>${t('design_word')} No. ${escapeHtml(d.designNumber)}${d.colour ? ' · '+escapeHtml(d.colour) : ''}</span>
       <button class="chip x" style="border:none;background:none;color:var(--rust);font-weight:700;" onclick="removeCartDesign(${idx})">${t('remove')} ✕</button></div>
       <div>${chips}</div>
     </div>`;
   }).join('');
-
-  const tempChips = tempSizes.map((s, i)=>`<span class="chip">${escapeHtml(s.size)} · ${s.qty} <button class="x" onclick="removeTempSize(${i})">×</button></span>`).join('');
 
   main.innerHTML = `
     <div class="card">
@@ -1309,18 +1362,16 @@ function renderBook(main){
       <label style="margin-top:10px;">${t('size')}</label>
       <div class="row">
         <div class="size-suggest-wrap" id="sizeSuggestWrap">
-          <input id="sizeVal" placeholder="${t('size_ph')}" autocomplete="off" oninput="filterSizeSuggestions()" onfocus="showSizeSuggestions()">
+          <input id="sizeVal" placeholder="${t('size_ph')}" autocomplete="off" oninput="filterSizeSuggestions()" onfocus="showSizeSuggestions()" onkeydown="if(event.key==='Enter'){event.preventDefault();addTempSize();}">
           <div id="sizeSuggestions" class="size-suggest-dropdown" style="display:none;"></div>
         </div>
         <div style="max-width:80px;">
           <label>${t('set')}</label>
-          <input id="qtyVal" type="number" min="1" value="1">
+          <input id="qtyVal" type="number" min="1" value="1" onkeydown="if(event.key==='Enter'){event.preventDefault();addTempSize();}">
         </div>
         <button class="small btn-inline" onclick="addTempSize()">+</button>
       </div>
-      <div>${tempChips || `<span style="color:#7e8896;font-size:13px;">${t('no_size_added')}</span>`}</div>
-
-      <button class="secondary" style="margin-top:12px;" onclick="addDesignToCart()">${t('add_design_btn')}</button>
+      <div style="font-size:12px;color:#7e8896;margin-top:4px;">${t('size_add_hint')}</div>
     </div>
 
     <div class="card">
@@ -1365,35 +1416,41 @@ document.addEventListener('click', function(e){
 function addTempSize(){
   const sizeInput = document.getElementById('sizeVal');
   const qtyInput = document.getElementById('qtyVal');
+  const designInput = document.getElementById('designNo');
+  const colourInput = document.getElementById('designColour');
+  const designNo = designInput.value.trim();
+  const colour = colourInput.value.trim();
   const size = sizeInput.value.trim();
   const qty = parseInt(qtyInput.value) || 0;
   const msg = document.getElementById('bookMsg');
+  if(!designNo){ msg.innerHTML = `<div class="msg err">${t('enter_design_err')}</div>`; return; }
   if(!size || qty <= 0){
     msg.innerHTML = `<div class="msg err">${t('size_qty_err')}</div>`;
     return;
   }
-  tempSizes.push({ size, qty });
+  // Goes straight into the order — no separate "Add this design" step. If
+  // this same design+colour is already in the cart, the new size just joins
+  // it; otherwise a new design block is started.
+  let entry = draftCart.find(d=>d.designNumber===designNo && (d.colour||'')===colour);
+  if(!entry){
+    entry = { designNumber: designNo, colour: colour, sizes: [] };
+    draftCart.push(entry);
+  }
+  entry.sizes.push({ size, qty });
+
   sizeInput.value = '';
   qtyInput.value = '1';
   msg.innerHTML = '';
   render();
-  setTimeout(()=>document.getElementById('sizeVal').focus(), 0);
+  setTimeout(()=>{ const el=document.getElementById('sizeVal'); if(el) el.focus(); }, 0);
 }
 
-function removeTempSize(i){ tempSizes.splice(i,1); render(); }
-
-function addDesignToCart(){
-  const designNo = document.getElementById('designNo').value.trim();
-  const colour = document.getElementById('designColour').value.trim();
-  const msg = document.getElementById('bookMsg');
-  if(!designNo){ msg.innerHTML = `<div class="msg err">${t('enter_design_err')}</div>`; return; }
-  if(!tempSizes.length){ msg.innerHTML = `<div class="msg err">${t('add_size_err')}</div>`; return; }
-  draftCart.push({ designNumber: designNo, colour: colour, sizes: tempSizes });
-  tempDesignNumber = '';
-  tempColour = '';
-  tempSizes = [];
+function removeCartSize(designIdx, sizeIdx){
+  const d = draftCart[designIdx];
+  if(!d) return;
+  d.sizes.splice(sizeIdx,1);
+  if(!d.sizes.length) draftCart.splice(designIdx,1);
   render();
-  setTimeout(()=>document.getElementById('designNo').focus(), 0);
 }
 
 function removeCartDesign(idx){ draftCart.splice(idx,1); render(); }
@@ -1440,6 +1497,10 @@ async function saveOrder(){
     const count = draftCart.length;
     await logActivity('Order Booked', `${custName}${custBrand ? ' ('+custBrand+')' : ''} — ${count} design(s), ${totalSets} sets`);
 
+    // Grab exactly the rows just created (matched by this save's timestamp)
+    // before clearing the form, so we can hand them straight to WhatsApp.
+    const justSavedRows = bookings.filter(b=>b.customerName===custName && b.orderedAt===now);
+
     draftCart = [];
     draftCustomer = '';
     draftBrand = '';
@@ -1449,9 +1510,21 @@ async function saveOrder(){
     render();
     const m2 = document.getElementById('bookMsg');
     if(m2) m2.innerHTML = `<div class="msg ok">${count} ${t('designs_saved')}</div>`;
+
+    // Order saved — immediately build the PDF and hand it to WhatsApp, so
+    // the salesman doesn't have to go find it in the Pending tab afterwards.
+    await shareNewOrderPdf(custName, justSavedRows, totalSets);
   } finally {
     isSavingOrder = false;
   }
+}
+
+async function shareNewOrderPdf(cname, rows, total){
+  if(!rows.length) return;
+  const tableRows = rows.map(b=>[b.designNumber, b.colour||'-', b.size, b.brand||'-', String(b.qty)]);
+  const blob = buildPdfBlob(`${t('pending_order')} — ${cname}`, `Subhash Sales Agencies · ${new Date().toLocaleDateString('en-IN')}`, ['Design Number','Colour','Size','Brand','Set'], tableRows, `${t('total')}: ${total} ${t('sets')}`);
+  if(!blob) return;
+  await sharePdfBlob(blob, `Order-${cname.replace(/[^a-z0-9]/gi,'_')}-new.pdf`, `Order — ${cname}`, `New Order — ${cname}, ${t('total')} ${total} ${t('sets')}`);
 }
 
 /* ---------------- ARTICLE (DISPATCH) SEARCH TAB ---------------- */
@@ -1508,6 +1581,12 @@ function renderDispatch(main){
       const rows = matches.filter(b=>b.customerName===cname);
       const allDone = rows.every(b=>b.status==='dispatched');
 
+      // Small order-date label next to the customer's name — if they ordered
+      // this article on more than one date, show each date once.
+      const orderDates = [...new Set(rows.map(b=>dispatchDateKey(b.orderedAt)))]
+        .sort((a,b)=>b.localeCompare(a))
+        .map(dk=>dispatchDateLabel(dk));
+
       // group this customer's rows by colour + brand together, since the same
       // customer (or different customers) can order the same article under
       // different brands and/or colours — staff need to see exactly which
@@ -1537,10 +1616,22 @@ function renderDispatch(main){
       }).join('');
 
       return `<div class="cust-card${allDone ? ' all-done' : ''}">
-        <div class="cust-head"><span class="name">${escapeHtml(cname)}</span>${allDone ? `<span class="set-pill done">${t('fully_dispatched')}</span>` : ''}</div>
+        <div class="cust-head"><span class="name">${escapeHtml(cname)} <span style="font-size:11.5px;font-weight:500;color:#8a93a0;margin-left:6px;">${orderDates.map(escapeHtml).join(', ')}</span></span>${allDone ? `<span class="set-pill done">${t('fully_dispatched')}</span>` : ''}</div>
         ${groupsHtml}
       </div>`;
     }).join('') : `<div class="empty">${t('no_article_found')}</div>`;
+
+    // Parties whose order for this article was moved to Deleted — shown
+    // greyed out and non-clickable, just as a record that they existed,
+    // so staff aren't confused about where an order went.
+    const trashedMatches = bookings.filter(b=>b.trashed && b.designNumber===exactDesign &&
+      (!hasBrandQuery || (b.brand||'').toLowerCase().includes(dispatchBrandQuery.trim().toLowerCase())));
+    const trashedCustomers = [...new Set(trashedMatches.map(b=>b.customerName))].filter(cname=>!customers.includes(cname));
+    const trashedCardsHtml = trashedCustomers.map(cname=>`
+      <div class="cust-card" style="opacity:0.4;filter:grayscale(70%);pointer-events:none;user-select:none;">
+        <div class="cust-head"><span class="name">${escapeHtml(cname)}</span><span class="set-pill" style="background:#e2e2e2;color:#777;">${t('nav_deleted')}</span></div>
+      </div>
+    `).join('');
 
     const allColours = [...new Set(matches.map(b=>b.colour).filter(Boolean))];
     const allBrands = [...new Set(matches.map(b=>b.brand).filter(Boolean))];
@@ -1557,6 +1648,7 @@ function renderDispatch(main){
         </div>
       </div>
       ${custCards}
+      ${trashedCardsHtml}
     `;
   } else if(!hasArticleQuery && hasBrandQuery){
     // Article number left blank, only a brand typed — show every article
@@ -1963,25 +2055,88 @@ function renderPendingOrders(main){
     customers = customers.filter(n=>n.toLowerCase().includes(q));
   }
 
-  const cards = customers.map(cname=>{
-    const rows = filtered.filter(b=>b.customerName===cname)
-      .sort((a,b)=>(a.designNumber).localeCompare(b.designNumber));
-    const total = rows.reduce((s,b)=>s+b.qty,0);
-    const lines = rows.map(b=>
-      `<div class="item-line"><span>${t('design_word')} ${escapeHtml(b.designNumber)}${b.colour?(' · '+escapeHtml(b.colour)):''} · ${escapeHtml(b.size)}${b.brand?(' · '+escapeHtml(b.brand)):''}</span><span>${b.qty} ${t('set')}</span></div>`
-    ).join('');
-    return `<div class="cust-card">
-      <div class="cust-head"><span class="name">${escapeHtml(cname)}</span><span class="set-pill pending">${total} ${t('badge_pending')}</span></div>
-      ${lines}
-      <div class="action-row">
-        <button class="action-btn wa" onclick="shareWhatsAppPending('${cname.replace(/'/g,"\\'")}')">${t('whatsapp')}</button>
-        <button class="action-btn pr" onclick="printPendingOrder('${cname.replace(/'/g,"\\'")}')">${t('print')}</button>
-        ${canCurrentUserDelete() ? `<button class="action-btn del" onclick="deletePendingOrder('${cname.replace(/'/g,"\\'")}')">${t('delete_btn')}</button>` : ''}
-      </div>
-    </div>`;
+  if(!customers.length){
+    main.innerHTML = searchBar + `<div class="empty">${t('no_customer_found')}</div>`;
+    return;
+  }
+
+  // Group by the date the order was placed (orderedAt), same pattern as the
+  // Dispatched tab's dispatch-date grouping, so today's orders sit under
+  // today and older orders sit under their own date.
+  const dateGroups = {};
+  filtered.filter(b=>customers.includes(b.customerName)).forEach(b=>{
+    const dk = dispatchDateKey(b.orderedAt);
+    if(!dateGroups[dk]) dateGroups[dk] = {};
+    if(!dateGroups[dk][b.customerName]) dateGroups[dk][b.customerName] = [];
+    dateGroups[dk][b.customerName].push(b);
+  });
+  const dateKeys = Object.keys(dateGroups).sort((a,b)=>b.localeCompare(a));
+
+  const cards = dateKeys.map(dk=>{
+    const custMap = dateGroups[dk];
+    const custCards = Object.keys(custMap).map(cname=>{
+      const rows = custMap[cname].sort((a,b)=>(a.designNumber).localeCompare(b.designNumber));
+      const total = rows.reduce((s,b)=>s+b.qty,0);
+      const lines = rows.map(b=>
+        `<div class="item-line"><span>${t('design_word')} ${escapeHtml(b.designNumber)}${b.colour?(' · '+escapeHtml(b.colour)):''} · ${escapeHtml(b.size)}${b.brand?(' · '+escapeHtml(b.brand)):''}</span><span>${b.qty} ${t('set')}</span></div>`
+      ).join('');
+      return `<div class="cust-card">
+        <div class="cust-head"><span class="name">${escapeHtml(cname)}</span><span class="set-pill pending">${total} ${t('badge_pending')}</span></div>
+        ${lines}
+        <div class="action-row">
+          <button class="action-btn wa" onclick="shareWhatsAppPendingDated('${cname.replace(/'/g,"\\'")}','${dk}')">${t('whatsapp')}</button>
+          <button class="action-btn pr" onclick="printPendingOrderDated('${cname.replace(/'/g,"\\'")}','${dk}')">${t('print')}</button>
+          ${canCurrentUserDelete() ? `<button class="action-btn del" onclick="deletePendingOrderDated('${cname.replace(/'/g,"\\'")}','${dk}')">${t('delete_btn')}</button>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+    return `<div class="date-section-label">${dispatchDateLabel(dk)}</div>${custCards}`;
   }).join('');
 
-  main.innerHTML = searchBar + (cards || `<div class="empty">${t('no_customer_found')}</div>`);
+  main.innerHTML = searchBar + cards;
+}
+
+function getPendingDatedRows(cname, dk){
+  return bookings.filter(b=>b.customerName===cname && b.status==='pending' && !b.trashed && dispatchDateKey(b.orderedAt)===dk)
+    .sort((a,b)=>(a.designNumber).localeCompare(b.designNumber));
+}
+
+function buildPendingOrderPdfDated(cname, dk){
+  const rows = getPendingDatedRows(cname, dk);
+  const total = rows.reduce((s,b)=>s+b.qty,0);
+  const tableRows = rows.map(b=>[b.designNumber, b.colour||'-', b.size, b.brand||'-', String(b.qty)]);
+  return {
+    blob: buildPdfBlob(`${t('pending_order')} — ${cname}`, `Subhash Sales Agencies · ${dispatchDateLabel(dk)}`, ['Design Number','Colour','Size','Brand','Set'], tableRows, `${t('total')}: ${total} ${t('sets')}`),
+    total
+  };
+}
+
+function printPendingOrderDated(cname, dk){
+  const { blob } = buildPendingOrderPdfDated(cname, dk);
+  if(!blob){ alert(t('pdf_gen_fail')); return; }
+  openPdfBlob(blob, `Pending-${cname.replace(/[^a-z0-9]/gi,'_')}-${dk}.pdf`);
+}
+
+async function shareWhatsAppPendingDated(cname, dk){
+  const { blob, total } = buildPendingOrderPdfDated(cname, dk);
+  if(!blob){ alert(t('pdf_gen_fail')); return; }
+  await sharePdfBlob(blob, `Pending-${cname.replace(/[^a-z0-9]/gi,'_')}-${dk}.pdf`, `${t('pending_order')} — ${cname}`, `${t('pending_order')} — ${cname} (${dispatchDateLabel(dk)}), ${t('total')} ${total} ${t('sets')}`);
+}
+
+async function deletePendingOrderDated(cname, dk){
+  if(!canCurrentUserDelete()){ alert(t('delete_not_allowed')); return; }
+  let total = 0;
+  bookings.forEach(b=>{
+    if(b.customerName===cname && b.status==='pending' && !b.trashed && dispatchDateKey(b.orderedAt)===dk){
+      b.trashed = true;
+      b.trashedAt = new Date().toISOString();
+      b.trashedBy = currentStaff ? { name: currentStaff.name, mobile: currentStaff.mobile } : null;
+      total += b.qty;
+    }
+  });
+  await saveData();
+  await logActivity('Order Deleted', `${cname} — ${dispatchDateLabel(dk)} — ${total} sets`);
+  render();
 }
 
 function buildPendingOrderPdf(cname){
