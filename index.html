@@ -554,6 +554,7 @@ const I18N = {
     colour_optional:'Colour (optional)', colour_ph:'e.g. Navy Purple',
     size:'Size', size_ph:'Tap to choose or type a size', no_size_added:'No size added yet',
     size_add_hint:'Tap + to add each size straight into the order below',
+    dispatch_btn:'Dispatch',
     add_design_btn:'Add This Design to Order', designs_in_order:'Designs in This Order',
     no_design_added:'No design added yet', save_order:'Save Order', remove:'Remove',
     enter_design_err:'Please enter design number', add_size_err:'Add at least one size',
@@ -630,6 +631,7 @@ const I18N = {
     colour_optional:'कलर (वैकल्पिक)', colour_ph:'जैसे नेवी पर्पल',
     size:'साइज़', size_ph:'चुनने के लिए टैप करें या साइज़ लिखें', no_size_added:'अभी कोई साइज़ नहीं जोड़ा गया',
     size_add_hint:'हर साइज़ जोड़ने के लिए + दबाएं, सीधा नीचे ऑर्डर में जुड़ जाएगा',
+    dispatch_btn:'डिस्पैच',
     add_design_btn:'यह डिज़ाइन ऑर्डर में जोड़ें', designs_in_order:'इस ऑर्डर में डिज़ाइन',
     no_design_added:'अभी कोई डिज़ाइन नहीं जोड़ा गया', save_order:'ऑर्डर सेव करें', remove:'हटाएं',
     enter_design_err:'कृपया डिज़ाइन नंबर लिखें', add_size_err:'कम से कम एक साइज़ जोड़ें',
@@ -714,19 +716,40 @@ function applyStaticLanguage(){
    share sends that same PDF as a file (via the phone's native share sheet)
    instead of a plain text message. */
 
+// Company letterhead used at the top of every generated PDF (order slips,
+// pending/dispatched summaries, activity log, brand overview).
+const COMPANY_LOGO_B64 = 'data:image/jpeg;base64,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';
+const COMPANY_NAME = 'Subhash Sales Agencies';
+const COMPANY_ADDRESS = '143, Hukumchand Market, Imli Bazar, Indore';
+const COMPANY_CONTACT = '9425410337';
+
 function buildPdfBlob(title, subtitle, columns, rows, footerText){
   if(!window.jspdf || !window.jspdf.jsPDF) return null;
   try{
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF();
+
+    // Letterhead: logo + company name/address/contact, on every PDF.
+    try{ doc.addImage(COMPANY_LOGO_B64, 'JPEG', 14, 8, 16, 13.7); }catch(e){ console.error('Logo embed failed', e); }
+    doc.setFontSize(13);
+    doc.setTextColor(20,20,20);
+    doc.text(`Name : ${COMPANY_NAME}`, 34, 13);
+    doc.setFontSize(9);
+    doc.setTextColor(90,100,115);
+    doc.text(`Address : ${COMPANY_ADDRESS}`, 34, 18.5);
+    doc.text(`Contact : ${COMPANY_CONTACT}`, 34, 23.5);
+    doc.setDrawColor(213,223,236);
+    doc.line(14, 28, 196, 28);
+
     doc.setFontSize(14);
-    doc.text(title, 14, 16);
+    doc.setTextColor(20,20,20);
+    doc.text(title, 14, 36);
     doc.setFontSize(10);
     doc.setTextColor(90,100,115);
-    doc.text(subtitle, 14, 23);
+    doc.text(subtitle, 14, 43);
     doc.setTextColor(20,20,20);
     doc.autoTable({
-      startY: 28,
+      startY: 48,
       head: [columns],
       body: rows,
       styles: { fontSize: 9, cellPadding: 3 },
@@ -734,7 +757,7 @@ function buildPdfBlob(title, subtitle, columns, rows, footerText){
       theme: 'grid'
     });
     if(footerText){
-      const finalY = (doc.lastAutoTable && doc.lastAutoTable.finalY) || 28;
+      const finalY = (doc.lastAutoTable && doc.lastAutoTable.finalY) || 48;
       doc.setFontSize(11);
       doc.setTextColor(20,20,20);
       doc.text(footerText, 14, finalY + 10);
@@ -1896,6 +1919,28 @@ async function dispatchOne(bookingId){
   render();
 }
 
+// Dispatches every pending item in one customer's whole Pending-tab group
+// (i.e. one date group) in a single tap, straight from the Pending tab.
+// It's the exact same status flip as dispatchOne, just applied to every
+// row in that group — so it shows up correctly (blurred/✓) the moment
+// someone searches for it in the Article tab or opens the Dispatched tab.
+async function dispatchGroupDated(cname, dk){
+  const now = new Date().toISOString();
+  const dispatchedBy = currentStaff ? { name: currentStaff.name, mobile: currentStaff.mobile } : null;
+  const rows = bookings.filter(b=>b.customerName===cname && b.status==='pending' && !b.trashed && dispatchDateKey(b.orderedAt)===dk);
+  if(!rows.length) return;
+  let total = 0;
+  rows.forEach(b=>{
+    b.status = 'dispatched';
+    b.dispatchedAt = now;
+    b.dispatchedBy = dispatchedBy;
+    total += b.qty;
+  });
+  await saveData();
+  await logActivity('Order Dispatched', `${cname} — ${dispatchDateLabel(dk)} — ${total} sets`);
+  render();
+}
+
 /* ---------------- DISPATCHED ORDERS TAB ---------------- */
 
 function dispatchDateKey(iso){
@@ -2120,7 +2165,12 @@ function renderPendingOrders(main){
         `<div class="item-line"><span>${t('design_word')} ${escapeHtml(b.designNumber)}${b.colour?(' · '+escapeHtml(b.colour)):''} · ${escapeHtml(b.size)}${b.brand?(' · '+escapeHtml(b.brand)):''}</span><span>${b.qty} ${t('set')}</span></div>`
       ).join('');
       return `<div class="cust-card">
-        <div class="cust-head"><span class="name">${escapeHtml(cname)}</span><span class="set-pill pending">${total} ${t('badge_pending')}</span></div>
+        <div class="cust-head"><span class="name">${escapeHtml(cname)}</span>
+          <span style="display:inline-flex;align-items:center;gap:6px;">
+            <span class="set-pill pending">${total} ${t('badge_pending')}</span>
+            <button class="action-btn pr" style="padding:5px 10px;font-size:12px;" onclick="dispatchGroupDated('${cname.replace(/'/g,"\\'")}','${dk}')">${t('dispatch_btn')}</button>
+          </span>
+        </div>
         ${lines}
         <div class="action-row">
           <button class="action-btn wa" onclick="shareWhatsAppPendingDated('${cname.replace(/'/g,"\\'")}','${dk}')">${t('whatsapp')}</button>
