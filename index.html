@@ -554,7 +554,7 @@ const I18N = {
     colour_optional:'Colour (optional)', colour_ph:'e.g. Navy Purple',
     size:'Size', size_ph:'Tap to choose or type a size', no_size_added:'No size added yet',
     size_add_hint:'Tap + to add each size straight into the order below',
-    dispatch_btn:'Dispatch',
+    dispatch_btn:'Dispatch', dispatching:'Dispatching…',
     add_design_btn:'Add This Design to Order', designs_in_order:'Designs in This Order',
     no_design_added:'No design added yet', save_order:'Save Order', remove:'Remove',
     enter_design_err:'Please enter design number', add_size_err:'Add at least one size',
@@ -631,7 +631,7 @@ const I18N = {
     colour_optional:'कलर (वैकल्पिक)', colour_ph:'जैसे नेवी पर्पल',
     size:'साइज़', size_ph:'चुनने के लिए टैप करें या साइज़ लिखें', no_size_added:'अभी कोई साइज़ नहीं जोड़ा गया',
     size_add_hint:'हर साइज़ जोड़ने के लिए + दबाएं, सीधा नीचे ऑर्डर में जुड़ जाएगा',
-    dispatch_btn:'डिस्पैच',
+    dispatch_btn:'डिस्पैच', dispatching:'डिस्पैच हो रहा है…',
     add_design_btn:'यह डिज़ाइन ऑर्डर में जोड़ें', designs_in_order:'इस ऑर्डर में डिज़ाइन',
     no_design_added:'अभी कोई डिज़ाइन नहीं जोड़ा गया', save_order:'ऑर्डर सेव करें', remove:'हटाएं',
     enter_design_err:'कृपया डिज़ाइन नंबर लिखें', add_size_err:'कम से कम एक साइज़ जोड़ें',
@@ -1365,6 +1365,21 @@ async function revokeStaff(email){
 
 /* ---------------- BOOK ORDER TAB ---------------- */
 
+// Lets staff move between the Order form's fields using the keyboard's
+// Up/Down arrow keys instead of having to click each field by hand —
+// Down moves to the next field, Up moves back to the previous one.
+const ORDER_FORM_FIELD_SEQUENCE = ['custName','custBrand','designNo','designColour','sizeVal','qtyVal'];
+function handleOrderFormArrowNav(e, fieldId){
+  if(e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+  e.preventDefault();
+  const idx = ORDER_FORM_FIELD_SEQUENCE.indexOf(fieldId);
+  if(idx === -1) return;
+  const nextId = ORDER_FORM_FIELD_SEQUENCE[e.key === 'ArrowDown' ? idx + 1 : idx - 1];
+  if(!nextId) return;
+  const el = document.getElementById(nextId);
+  if(el){ el.focus(); if(el.select) el.select(); }
+}
+
 function renderBook(main){
   const cartBlocks = draftCart.map((d, idx)=>{
     const chips = d.sizes.map((s,si)=>`<span class="chip">${escapeHtml(s.size)} · ${s.qty} <button class="x" onclick="removeCartSize(${idx},${si})">×</button></span>`).join('');
@@ -1378,29 +1393,29 @@ function renderBook(main){
   main.innerHTML = `
     <div class="card">
       <h2><span class="label-dot" style="background:var(--navy);"></span>${t('customer_name')}</h2>
-      <input id="custName" class="field-navy" list="customerList" placeholder="${t('enter_customer_name')}" value="${escapeHtml(draftCustomer)}" oninput="draftCustomer=this.value">
+      <input id="custName" class="field-navy" list="customerList" placeholder="${t('enter_customer_name')}" value="${escapeHtml(draftCustomer)}" oninput="draftCustomer=this.value" onkeydown="handleOrderFormArrowNav(event,'custName')">
       <label style="margin-top:10px;"><span class="label-dot" style="background:var(--sage);"></span>${t('brand_name')} *</label>
-      <input id="custBrand" class="field-sage" list="brandList" placeholder="${t('enter_brand_name')}" value="${escapeHtml(draftBrand)}" oninput="draftBrand=this.value">
+      <input id="custBrand" class="field-sage" list="brandList" placeholder="${t('enter_brand_name')}" value="${escapeHtml(draftBrand)}" oninput="draftBrand=this.value" onkeydown="handleOrderFormArrowNav(event,'custBrand')">
     </div>
 
     <div class="card">
       <h2>${t('add_design')}</h2>
       <div id="bookMsg"></div>
       <label><span class="label-dot" style="background:var(--rust);"></span>${t('design_number')}</label>
-      <input id="designNo" class="field-rust" list="designList" placeholder="${t('design_ph')}" value="${escapeHtml(tempDesignNumber)}" oninput="tempDesignNumber=this.value">
+      <input id="designNo" class="field-rust" list="designList" placeholder="${t('design_ph')}" value="${escapeHtml(tempDesignNumber)}" oninput="tempDesignNumber=this.value" onkeydown="handleOrderFormArrowNav(event,'designNo')">
 
       <label style="margin-top:10px;">${t('colour_optional')}</label>
-      <input id="designColour" placeholder="${t('colour_ph')}" value="${escapeHtml(tempColour)}" oninput="tempColour=this.value">
+      <input id="designColour" placeholder="${t('colour_ph')}" value="${escapeHtml(tempColour)}" oninput="tempColour=this.value" onkeydown="handleOrderFormArrowNav(event,'designColour')">
 
       <label style="margin-top:10px;"><span class="label-dot" style="background:var(--mustard);"></span>${t('size')}</label>
       <div class="row">
         <div class="size-suggest-wrap" id="sizeSuggestWrap">
-          <input id="sizeVal" class="field-mustard" placeholder="${t('size_ph')}" autocomplete="off" oninput="filterSizeSuggestions()" onfocus="showSizeSuggestions()" onkeydown="if(event.key==='Enter'){event.preventDefault();addTempSize();}">
+          <input id="sizeVal" class="field-mustard" placeholder="${t('size_ph')}" autocomplete="off" oninput="filterSizeSuggestions()" onfocus="showSizeSuggestions()" onkeydown="if(event.key==='Enter'){event.preventDefault();addTempSize();}else{handleOrderFormArrowNav(event,'sizeVal')}">
           <div id="sizeSuggestions" class="size-suggest-dropdown" style="display:none;"></div>
         </div>
         <div style="max-width:80px;">
           <label>${t('set')}</label>
-          <input id="qtyVal" type="number" min="1" value="1" onkeydown="if(event.key==='Enter'){event.preventDefault();addTempSize();}">
+          <input id="qtyVal" type="number" min="1" value="1" onkeydown="if(event.key==='Enter'){event.preventDefault();addTempSize();}else{handleOrderFormArrowNav(event,'qtyVal')}">
         </div>
         <button class="small btn-inline" onclick="addTempSize()">+</button>
       </div>
@@ -2158,7 +2173,15 @@ function renderPendingOrders(main){
 
   const cards = dateKeys.map(dk=>{
     const custMap = dateGroups[dk];
-    const custCards = Object.keys(custMap).map(cname=>{
+    // Most recently created order shows at the top of its date group, so
+    // whichever customer's order was just booked appears first, not
+    // whichever customer happened to be first in the underlying data.
+    const custNamesSorted = Object.keys(custMap).sort((a,b)=>{
+      const maxA = Math.max(...custMap[a].map(r=>new Date(r.orderedAt).getTime()));
+      const maxB = Math.max(...custMap[b].map(r=>new Date(r.orderedAt).getTime()));
+      return maxB - maxA;
+    });
+    const custCards = custNamesSorted.map(cname=>{
       const rows = custMap[cname].sort((a,b)=>(a.designNumber).localeCompare(b.designNumber));
       const total = rows.reduce((s,b)=>s+b.qty,0);
       const lines = rows.map(b=>
@@ -2168,7 +2191,7 @@ function renderPendingOrders(main){
         <div class="cust-head"><span class="name">${escapeHtml(cname)}</span>
           <span style="display:inline-flex;align-items:center;gap:6px;">
             <span class="set-pill pending">${total} ${t('badge_pending')}</span>
-            <button class="action-btn pr" style="padding:5px 10px;font-size:12px;" onclick="dispatchGroupDated('${cname.replace(/'/g,"\\'")}','${dk}')">${t('dispatch_btn')}</button>
+            <button class="action-btn pr" style="padding:5px 10px;font-size:12px;" onclick="this.disabled=true;this.style.opacity='0.45';this.textContent='${t('dispatching')}';dispatchGroupDated('${cname.replace(/'/g,"\\'")}','${dk}')">${t('dispatch_btn')}</button>
           </span>
         </div>
         ${lines}
@@ -2318,9 +2341,12 @@ function buildCustomerOrderPdf(cname){
   const rows = bookings.filter(b=>b.customerName===cname && !b.trashed)
     .sort((a,b)=>(a.designNumber).localeCompare(b.designNumber));
   const total = rows.reduce((s,b)=>s+b.qty,0);
-  const tableRows = rows.map(b=>[b.designNumber, b.colour||'-', b.size, b.brand||'-', String(b.qty), b.status==='dispatched'?'Dispatched':'Pending']);
+  // Includes the order date per line — this list spans every order a
+  // customer has ever placed, so staff need to see which line came from
+  // which date, not just the design/size/status.
+  const tableRows = rows.map(b=>[dispatchDateLabel(dispatchDateKey(b.orderedAt)), b.designNumber, b.colour||'-', b.size, b.brand||'-', String(b.qty), b.status==='dispatched'?'Dispatched':'Pending']);
   return {
-    blob: buildPdfBlob(`Order — ${cname}`, `Subhash Sales Agencies · ${new Date().toLocaleDateString('en-IN')}`, ['Design Number','Colour','Size','Brand','Set','Status'], tableRows, `Total: ${total} Sets`),
+    blob: buildPdfBlob(`Order — ${cname}`, `Subhash Sales Agencies · ${new Date().toLocaleDateString('en-IN')}`, ['Date','Design Number','Colour','Size','Brand','Set','Status'], tableRows, `Total: ${total} Sets`),
     total
   };
 }
