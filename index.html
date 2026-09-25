@@ -2338,8 +2338,11 @@ async function deleteAllByBrand(){
 /* ---------------- CUSTOMER-WISE TAB ---------------- */
 
 function buildCustomerOrderPdf(cname){
+  // Grouped by date first (oldest at top, going down to the most recent),
+  // so every line from the same date sits together as one block, instead
+  // of dates being mixed together by design number.
   const rows = bookings.filter(b=>b.customerName===cname && !b.trashed)
-    .sort((a,b)=>(a.designNumber).localeCompare(b.designNumber));
+    .sort((a,b)=> dispatchDateKey(a.orderedAt).localeCompare(dispatchDateKey(b.orderedAt)) || (a.designNumber).localeCompare(b.designNumber));
   const total = rows.reduce((s,b)=>s+b.qty,0);
   // Includes the order date per line — this list spans every order a
   // customer has ever placed, so staff need to see which line came from
