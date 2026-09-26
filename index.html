@@ -441,6 +441,7 @@ let doSearchDate = '';       // yyyy-mm-dd
 
 // pending-orders tab search state
 let pdSearchCustomer = '';
+let editingPendingGroup = null; // { cname, dk } — which Pending-tab group is currently in edit mode
 let pdSearchBrand = '';
 let pdSearchDate = ''; // yyyy-mm-dd
 
@@ -555,6 +556,10 @@ const I18N = {
     size:'Size', size_ph:'Tap to choose or type a size', no_size_added:'No size added yet',
     size_add_hint:'Tap + to add each size straight into the order below',
     dispatch_btn:'Dispatch', dispatching:'Dispatching…',
+    edit_btn:'Edit', editing:'Editing…', save_changes:'Save Changes', cancel:'Cancel',
+    upload_to_ai:'Upload to AI', ai_reading:'AI is reading your order form…',
+    ai_read_done:'AI has filled in the order below — please check it before saving',
+    ai_read_failed:'Could not read this file',
     add_design_btn:'Add This Design to Order', designs_in_order:'Designs in This Order',
     no_design_added:'No design added yet', save_order:'Save Order', remove:'Remove',
     enter_design_err:'Please enter design number', add_size_err:'Add at least one size',
@@ -632,6 +637,10 @@ const I18N = {
     size:'साइज़', size_ph:'चुनने के लिए टैप करें या साइज़ लिखें', no_size_added:'अभी कोई साइज़ नहीं जोड़ा गया',
     size_add_hint:'हर साइज़ जोड़ने के लिए + दबाएं, सीधा नीचे ऑर्डर में जुड़ जाएगा',
     dispatch_btn:'डिस्पैच', dispatching:'डिस्पैच हो रहा है…',
+    edit_btn:'एडिट', editing:'एडिट हो रहा है…', save_changes:'बदलाव सेव करें', cancel:'रद्द करें',
+    upload_to_ai:'AI को दिखाएं', ai_reading:'AI आपका ऑर्डर फॉर्म पढ़ रहा है…',
+    ai_read_done:'AI ने नीचे ऑर्डर भर दिया है — कृपया सेव करने से पहले जांच लें',
+    ai_read_failed:'यह फाइल पढ़ी नहीं जा सकी',
     add_design_btn:'यह डिज़ाइन ऑर्डर में जोड़ें', designs_in_order:'इस ऑर्डर में डिज़ाइन',
     no_design_added:'अभी कोई डिज़ाइन नहीं जोड़ा गया', save_order:'ऑर्डर सेव करें', remove:'हटाएं',
     enter_design_err:'कृपया डिज़ाइन नंबर लिखें', add_size_err:'कम से कम एक साइज़ जोड़ें',
@@ -1399,7 +1408,14 @@ function renderBook(main){
     </div>
 
     <div class="card">
-      <h2>${t('add_design')}</h2>
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <h2>${t('add_design')}</h2>
+        <div style="display:flex;flex-direction:column;align-items:center;">
+          <button type="button" onclick="document.getElementById('aiOrderFileInput').click()" style="width:34px;height:34px;border-radius:50%;border:2px solid var(--navy);background:#fff;color:var(--navy);font-size:20px;font-weight:700;line-height:1;cursor:pointer;">+</button>
+          <span style="font-size:10px;color:var(--navy);font-weight:600;margin-top:2px;">${t('upload_to_ai')}</span>
+        </div>
+        <input type="file" id="aiOrderFileInput" accept=".pdf,.xlsx,.xls,.jpg,.jpeg,.png" style="display:none;" onchange="handleAiOrderFileUpload(this.files[0])">
+      </div>
       <div id="bookMsg"></div>
       <label><span class="label-dot" style="background:var(--rust);"></span>${t('design_number')}</label>
       <input id="designNo" class="field-rust" list="designList" placeholder="${t('design_ph')}" value="${escapeHtml(tempDesignNumber)}" oninput="tempDesignNumber=this.value" onkeydown="handleOrderFormArrowNav(event,'designNo')">
@@ -1460,6 +1476,93 @@ document.addEventListener('click', function(e){
   const box = document.getElementById('sizeSuggestions');
   if(wrap && box && !wrap.contains(e.target)) box.style.display = 'none';
 });
+
+/* ---------------- AI order-form reading ----------------
+   Lets a photo/PDF/Excel of a paper order form be read straight into the
+   Order form, instead of typing every line by hand. The actual AI call
+   happens in Apps Script (see google-sheets-backend-code) — this file
+   never holds any API key, it only sends the file and gets structured
+   JSON back. ------------------------------------------------------- */
+
+function fileToBase64_(file){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = ()=>resolve(reader.result.split(',')[1]);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function excelFileToRawText_(file){
+  const buf = await file.arrayBuffer();
+  const wb = XLSX.read(buf, { type:'array' });
+  let text = '';
+  wb.SheetNames.forEach(name=>{
+    const sheet = wb.Sheets[name];
+    text += XLSX.utils.sheet_to_csv(sheet) + '\n';
+  });
+  return text;
+}
+
+async function handleAiOrderFileUpload(file){
+  if(!file) return;
+  const msg = document.getElementById('bookMsg');
+  if(msg) msg.innerHTML = `<div class="msg">${t('ai_reading')}</div>`;
+
+  try{
+    const ext = file.name.split('.').pop().toLowerCase();
+    let payload;
+    if(ext === 'xlsx' || ext === 'xls'){
+      const rawText = await excelFileToRawText_(file);
+      payload = { action:'aiExtractOrder', rawText };
+    } else {
+      const dataBase64 = await fileToBase64_(file);
+      const mimeType = ext === 'pdf' ? 'application/pdf' : (file.type || 'image/jpeg');
+      payload = { action:'aiExtractOrder', dataBase64, mimeType };
+    }
+
+    const res = await fetch(SHEET_SCRIPT_URL, {
+      method:'POST',
+      headers: {'Content-Type':'text/plain;charset=utf-8'},
+      body: JSON.stringify(payload)
+    });
+    const result = await res.json();
+    if(!result.success){
+      if(msg) msg.innerHTML = `<div class="msg err">${t('ai_read_failed')}${result.error ? ': '+escapeHtml(result.error) : ''}</div>`;
+      return;
+    }
+    applyAiExtractedOrder_(result.data);
+    // applyAiExtractedOrder_ triggers a re-render, which replaces the whole
+    // #bookMsg element — grab it fresh so the success message actually shows.
+    const msg2 = document.getElementById('bookMsg');
+    if(msg2) msg2.innerHTML = `<div class="msg ok">${t('ai_read_done')}</div>`;
+  }catch(e){
+    console.error('AI order read failed', e);
+    if(msg) msg.innerHTML = `<div class="msg err">${t('ai_read_failed')}</div>`;
+  }
+  document.getElementById('aiOrderFileInput').value = '';
+}
+
+function applyAiExtractedOrder_(data){
+  if(!data) return;
+  if(data.customerName){ draftCustomer = data.customerName; }
+  if(data.brand){ draftBrand = data.brand; }
+
+  (data.items || []).forEach(item=>{
+    const designNo = (item.designNumber || '').toString().trim();
+    const colour = (item.colour || '').toString().trim();
+    const size = (item.size || '').toString().trim();
+    const qty = parseInt(item.qty) || 1;
+    if(!designNo || !size) return;
+    let entry = draftCart.find(d=>d.designNumber===designNo && (d.colour||'')===colour);
+    if(!entry){
+      entry = { designNumber: designNo, colour: colour, sizes: [] };
+      draftCart.push(entry);
+    }
+    entry.sizes.push({ size, qty });
+  });
+  render();
+}
 
 function addTempSize(){
   const sizeInput = document.getElementById('sizeVal');
@@ -2184,8 +2287,38 @@ function renderPendingOrders(main){
     const custCards = custNamesSorted.map(cname=>{
       const rows = custMap[cname].sort((a,b)=>(a.designNumber).localeCompare(b.designNumber));
       const total = rows.reduce((s,b)=>s+b.qty,0);
+      const isEditing = editingPendingGroup && editingPendingGroup.cname===cname && editingPendingGroup.dk===dk;
+
+      if(isEditing){
+        // Edit mode: every line becomes editable (design/colour/size/qty),
+        // so a mistake made while booking can be corrected right here
+        // instead of deleting and re-creating the whole order.
+        const editRows = rows.map(b=>`
+          <div class="item-line" style="flex-wrap:wrap;gap:6px;align-items:center;">
+            <input id="editDesign-${b.id}" value="${escapeHtml(b.designNumber)}" style="width:90px;" placeholder="${t('design_number')}">
+            <input id="editColour-${b.id}" value="${escapeHtml(b.colour||'')}" style="width:90px;" placeholder="${t('colour_optional')}">
+            <input id="editSize-${b.id}" value="${escapeHtml(b.size)}" style="width:80px;" placeholder="${t('size')}">
+            <input id="editQty-${b.id}" type="number" min="1" value="${b.qty}" style="width:60px;">
+            <button class="chip x" style="border:none;background:none;color:var(--rust);font-weight:700;" onclick="removePendingEditRow('${b.id}')">✕</button>
+          </div>
+        `).join('');
+        return `<div class="cust-card">
+          <div class="cust-head"><span class="name">${escapeHtml(cname)}</span><span class="set-pill pending">${t('editing')}</span></div>
+          ${editRows}
+          <div class="action-row">
+            <button class="action-btn pr" onclick="saveEditPendingGroup('${cname.replace(/'/g,"\\'")}','${dk}')">${t('save_changes')}</button>
+            <button class="action-btn del" onclick="cancelEditPendingGroup()">${t('cancel')}</button>
+          </div>
+        </div>`;
+      }
+
       const lines = rows.map(b=>
-        `<div class="item-line"><span>${t('design_word')} ${escapeHtml(b.designNumber)}${b.colour?(' · '+escapeHtml(b.colour)):''} · ${escapeHtml(b.size)}${b.brand?(' · '+escapeHtml(b.brand)):''}</span><span>${b.qty} ${t('set')}</span></div>`
+        `<div class="item-line"><span>${t('design_word')} ${escapeHtml(b.designNumber)}${b.colour?(' · '+escapeHtml(b.colour)):''} · ${escapeHtml(b.size)}${b.brand?(' · '+escapeHtml(b.brand)):''}</span>
+          <span style="display:inline-flex;align-items:center;gap:8px;">
+            <span>${b.qty} ${t('set')}</span>
+            <button class="chip" style="cursor:pointer;padding:3px 9px;font-size:11px;border:1px solid var(--navy);background:#fff;color:var(--navy);" onclick="this.disabled=true;this.style.opacity='0.45';this.textContent='...';dispatchOne('${b.id}')">${t('dispatch_btn')}</button>
+          </span>
+        </div>`
       ).join('');
       return `<div class="cust-card">
         <div class="cust-head"><span class="name">${escapeHtml(cname)}</span>
@@ -2198,6 +2331,7 @@ function renderPendingOrders(main){
         <div class="action-row">
           <button class="action-btn wa" onclick="shareWhatsAppPendingDated('${cname.replace(/'/g,"\\'")}','${dk}')">${t('whatsapp')}</button>
           <button class="action-btn pr" onclick="printPendingOrderDated('${cname.replace(/'/g,"\\'")}','${dk}')">${t('print')}</button>
+          <button class="action-btn pr" onclick="startEditPendingGroup('${cname.replace(/'/g,"\\'")}','${dk}')">${t('edit_btn')}</button>
           ${canCurrentUserDelete() ? `<button class="action-btn del" onclick="deletePendingOrderDated('${cname.replace(/'/g,"\\'")}','${dk}')">${t('delete_btn')}</button>` : ''}
         </div>
       </div>`;
@@ -2206,6 +2340,46 @@ function renderPendingOrders(main){
   }).join('');
 
   main.innerHTML = searchBar + cards;
+}
+
+function startEditPendingGroup(cname, dk){
+  editingPendingGroup = { cname, dk };
+  render();
+}
+function cancelEditPendingGroup(){
+  editingPendingGroup = null;
+  render();
+}
+function removePendingEditRow(bookingId){
+  const row = document.querySelector(`#editDesign-${bookingId}`)?.closest('.item-line');
+  if(row) row.dataset.removed = '1';
+  if(row) row.style.display = 'none';
+}
+async function saveEditPendingGroup(cname, dk){
+  const rows = getPendingDatedRows(cname, dk);
+  for(const b of rows){
+    const designEl = document.getElementById(`editDesign-${b.id}`);
+    if(!designEl) continue; // row was marked removed
+    const row = designEl.closest('.item-line');
+    if(row && row.dataset.removed === '1'){
+      b.trashed = true;
+      b.trashedAt = new Date().toISOString();
+      b.trashedBy = currentStaff ? { name: currentStaff.name, mobile: currentStaff.mobile } : null;
+      continue;
+    }
+    const newDesign = designEl.value.trim();
+    const newColour = document.getElementById(`editColour-${b.id}`).value.trim();
+    const newSize = document.getElementById(`editSize-${b.id}`).value.trim();
+    const newQty = parseInt(document.getElementById(`editQty-${b.id}`).value) || b.qty;
+    if(newDesign) b.designNumber = newDesign;
+    b.colour = newColour;
+    if(newSize) b.size = newSize;
+    b.qty = newQty;
+  }
+  await saveData();
+  await logActivity('Pending Order Edited', `${cname} — ${dispatchDateLabel(dk)}`);
+  editingPendingGroup = null;
+  render();
 }
 
 function getPendingDatedRows(cname, dk){
