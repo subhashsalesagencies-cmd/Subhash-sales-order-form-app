@@ -138,6 +138,12 @@
   .field-sage{ border-left:4px solid var(--sage) !important; background:#F3FAF6 !important; }
   .field-rust{ border-left:4px solid var(--rust) !important; background:#FDF6F3 !important; }
   .field-mustard{ border-left:4px solid var(--mustard) !important; background:#F2F8FF !important; }
+  .hide-toggle{
+    flex:none; border:none; cursor:pointer; color:#fff; font-weight:700; font-size:12px;
+    padding:12px 12px; border-radius:10px; margin-bottom:0;
+    background:linear-gradient(135deg,#e8590c,#c2255c);
+    box-shadow:0 2px 6px rgba(194,37,92,0.35);
+  }
   .label-dot{
     display:inline-block; width:7px; height:7px; border-radius:50%;
     margin-right:6px; vertical-align:middle;
@@ -344,17 +350,18 @@
     letter-spacing:.3px; margin:10px 0 5px 0;
   }
   .colour-label:first-child{ margin-top:2px; }
+  /* Size presets sit directly under the Size row as horizontal chips
+     (landscape, wrapping across the width) instead of a tall dropdown list. */
   .size-suggest-dropdown{
-    position:absolute; top:100%; left:0; right:0; z-index:30;
-    background:#fff; border:1px solid var(--line); border-radius:8px;
-    margin-top:4px; max-height:230px; overflow-y:auto;
-    box-shadow:0 6px 18px rgba(0,0,0,.15);
+    display:flex; flex-wrap:wrap; gap:8px;
+    margin-top:10px; padding:10px;
+    background:#F2F8FF; border:1px solid var(--line); border-radius:10px;
+    max-height:150px; overflow-y:auto;
   }
   .size-suggest-item{
-    padding:11px 14px; font-size:14.5px; font-weight:600; color:var(--ink);
-    border-bottom:1px solid var(--linen);
+    padding:9px 14px; font-size:14px; font-weight:600; color:var(--navy);
+    background:#fff; border:1.5px solid var(--navy); border-radius:20px;
   }
-  .size-suggest-item:last-child{ border-bottom:none; }
   .size-suggest-item:active{ background:var(--navy); color:#fff; }
 
   .date-section-label{
@@ -417,6 +424,9 @@ let draftBrand = '';
 let draftCart = [];          // [{designNumber, colour, sizes:[{size, qty}]}]
 let tempDesignNumber = '';
 let tempColour = '';
+let tempPrice = '';
+let hideColourPrice = false; // Order form: hides the Colour + Price boxes when toggled
+let activitySearchStaff = '';
 let tempSizes = [];          // [{size, qty}]
 
 // Preset sizes shown in a tap-to-filter dropdown in Add Design. Staff can also
@@ -557,6 +567,8 @@ const I18N = {
     size_add_hint:'Tap + to add each size straight into the order below',
     dispatch_btn:'Dispatch', dispatching:'Dispatching…',
     edit_btn:'Edit', editing:'Editing…', save_changes:'Save Changes', cancel:'Cancel',
+    price_per_pcs:'Price per pcs', price_word:'Price', colour_word:'Colour', hide_word:'Hide', unhide_word:'Unhide',
+    staff_search_ph:'Search staff name',
     upload_to_ai:'Upload to AI', ai_reading:'AI is reading your order form…',
     ai_read_done:'AI has filled in the order below — please check it before saving',
     ai_read_failed:'Could not read this file',
@@ -638,6 +650,8 @@ const I18N = {
     size_add_hint:'हर साइज़ जोड़ने के लिए + दबाएं, सीधा नीचे ऑर्डर में जुड़ जाएगा',
     dispatch_btn:'डिस्पैच', dispatching:'डिस्पैच हो रहा है…',
     edit_btn:'एडिट', editing:'एडिट हो रहा है…', save_changes:'बदलाव सेव करें', cancel:'रद्द करें',
+    price_per_pcs:'कीमत प्रति पीस', price_word:'कीमत', colour_word:'कलर', hide_word:'छुपाएं', unhide_word:'दिखाएं',
+    staff_search_ph:'स्टाफ का नाम खोजें',
     upload_to_ai:'AI को दिखाएं', ai_reading:'AI आपका ऑर्डर फॉर्म पढ़ रहा है…',
     ai_read_done:'AI ने नीचे ऑर्डर भर दिया है — कृपया सेव करने से पहले जांच लें',
     ai_read_failed:'यह फाइल पढ़ी नहीं जा सकी',
@@ -732,6 +746,22 @@ const COMPANY_NAME = 'Subhash Sales Agencies';
 const COMPANY_ADDRESS = '143, Hukumchand Market, Imli Bazar, Indore';
 const COMPANY_CONTACT = '9425410337';
 
+// Adds a "Price" column to an order PDF, but only when at least one line in
+// it actually has a price — orders for brands that don't use prices keep
+// their PDFs exactly as before. tableRows[i] must correspond to srcRows[i].
+function pdfWithPrice_(columns, tableRows, srcRows, afterCol){
+  if(!srcRows.some(b=>b.pricePerPcs)) return { columns: columns, tableRows: tableRows };
+  const idx = columns.indexOf(afterCol) + 1;
+  const cols = columns.slice();
+  cols.splice(idx, 0, 'Price (Rs)');
+  const rows = tableRows.map((r,i)=>{
+    const c = r.slice();
+    c.splice(idx, 0, srcRows[i].pricePerPcs ? String(srcRows[i].pricePerPcs) : '-');
+    return c;
+  });
+  return { columns: cols, tableRows: rows };
+}
+
 function buildPdfBlob(title, subtitle, columns, rows, footerText){
   if(!window.jspdf || !window.jspdf.jsPDF) return null;
   try{
@@ -787,9 +817,11 @@ function openPdfBlob(blob, filename){
 }
 
 async function sharePdfBlob(blob, filename, shareTitle, shareText){
+  let file = null, canNative = false;
   try{
-    const file = new File([blob], filename, { type: 'application/pdf' });
-    if(navigator.canShare && navigator.canShare({ files: [file] })){
+    file = new File([blob], filename, { type: 'application/pdf' });
+    canNative = !!(navigator.canShare && navigator.canShare({ files: [file] }));
+    if(canNative){
       // Important: don't pass "text" alongside "files" here. On Android,
       // sharing a file + text together to WhatsApp's direct-share contact
       // shortcut makes WhatsApp misread it as an empty text message and
@@ -800,13 +832,21 @@ async function sharePdfBlob(blob, filename, shareTitle, shareText){
     }
   }catch(e){
     if(e && e.name === 'AbortError') return; // user cancelled the share sheet
+    if(canNative && e && e.name === 'NotAllowedError'){
+      // The phone only lets a page open the share sheet right after a tap.
+      // If too much time passed since the tap (slow network while saving),
+      // ask for one fresh tap instead of dropping to a download.
+      showShareAgainPrompt_(file, blob, filename, shareTitle, shareText);
+      return;
+    }
     console.error('Native share failed, falling back to download', e);
   }
-  // Fallback for browsers without file-sharing support (mostly desktop):
-  // download the PDF, then open WhatsApp so it can be attached manually.
-  // The file is already named after the customer (e.g. "Order-Amit.pdf"),
-  // and we call that name out in the message so it's easy to spot in the
-  // Downloads folder when attaching it in WhatsApp Web/Desktop.
+  downloadAndOpenWhatsApp_(blob, filename, shareText);
+}
+
+// Fallback for browsers without file-sharing support (mostly desktop):
+// download the PDF, then open WhatsApp so it can be attached manually.
+function downloadAndOpenWhatsApp_(blob, filename, shareText){
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url; a.download = filename;
@@ -815,9 +855,29 @@ async function sharePdfBlob(blob, filename, shareTitle, shareText){
   window.open(`https://wa.me/?text=${encodeURIComponent(shareText + `\n\n📎 PDF downloaded as "${filename}" — please attach it from your Downloads folder here.`)}`, '_blank');
 }
 
-// Primary storage: Google Sheets (via Apps Script Web App) — syncs across all staff devices.
-// Backup storage: this browser's localStorage — used if the Sheets call fails
-// (e.g. no internet at that moment), so nothing gets lost.
+function showShareAgainPrompt_(file, blob, filename, shareTitle, shareText){
+  const old = document.getElementById('shareAgainBar');
+  if(old) old.remove();
+  const bar = document.createElement('div');
+  bar.id = 'shareAgainBar';
+  bar.style.cssText = 'position:fixed;left:12px;right:12px;bottom:80px;z-index:999;background:#0F5132;color:#fff;border-radius:14px;padding:12px 14px;display:flex;align-items:center;gap:10px;box-shadow:0 6px 20px rgba(0,0,0,.3);';
+  bar.innerHTML = `<span style="flex:1;font-size:13.5px;font-weight:600;">Order saved. Tap to send the PDF on WhatsApp</span>
+    <button id="shareAgainBtn" style="background:#25D366;color:#063;border:none;border-radius:10px;padding:10px 14px;font-weight:700;">Share PDF</button>
+    <button id="shareAgainClose" style="background:none;border:none;color:#fff;font-size:20px;">✕</button>`;
+  document.body.appendChild(bar);
+  document.getElementById('shareAgainClose').onclick = ()=>bar.remove();
+  document.getElementById('shareAgainBtn').onclick = ()=>{
+    // this tap is a fresh user gesture, so the share sheet is allowed
+    navigator.share({ files: [file], title: shareTitle })
+      .then(()=>bar.remove())
+      .catch(e=>{
+        if(e && e.name === 'AbortError') return;
+        bar.remove();
+        downloadAndOpenWhatsApp_(blob, filename, shareText);
+      });
+  };
+}
+
 async function storageGet(key){
   if(cloudAvailable && navigator.onLine){
     try{
@@ -952,30 +1012,44 @@ async function loadData(){
 
 /* ---------------- AUTO-REFRESH: quietly re-checks Google Sheets every 20s
    so everyone sees each other's updates without hitting refresh, and syncs
-   any offline changes the moment internet is back. Skips refreshing while
-   someone is actively filling the Order form, so it never interrupts typing. */
+   any offline changes the moment internet is back. The underlying data is
+   ALWAYS kept current, on every tab including Order — only the Order form's
+   own body is left untouched while on it (so typing is never interrupted);
+   the topbar's Pending/Synced badge still updates live even there, since
+   it sits outside the form and re-drawing it can't disturb anything. */
 let autoRefreshTimer_ = null;
 function startAutoRefresh_(){
   if(autoRefreshTimer_) return;
   autoRefreshTimer_ = setInterval(async ()=>{
     if(!navigator.onLine || document.hidden) return;
     await flushDirtyKeys_();
-    if(currentTab === 'book') return;
     await silentRefresh_();
   }, 20000);
 
   window.addEventListener('online', async ()=>{
     updateSyncBadge_();
     await flushDirtyKeys_();
-    if(currentTab !== 'book') await silentRefresh_();
+    await silentRefresh_();
   });
   window.addEventListener('offline', updateSyncBadge_);
 
   document.addEventListener('visibilitychange', async ()=>{
     if(!document.hidden && navigator.onLine){
       await flushDirtyKeys_();
-      if(currentTab !== 'book') await silentRefresh_();
+      await silentRefresh_();
     }
+  });
+
+  // Extra safety nets for mobile: some mobile browsers (and installed PWAs)
+  // don't fire visibilitychange reliably when switching apps or waking the
+  // screen back up, but do fire 'focus' and 'pageshow'. Covering all three
+  // means coming back to the app almost always pulls fresh data immediately,
+  // rather than waiting for the next 20s tick.
+  window.addEventListener('focus', async ()=>{
+    if(navigator.onLine){ await flushDirtyKeys_(); await silentRefresh_(); }
+  });
+  window.addEventListener('pageshow', async (e)=>{
+    if(e.persisted && navigator.onLine){ await flushDirtyKeys_(); await silentRefresh_(); }
   });
 }
 
@@ -990,7 +1064,20 @@ async function silentRefresh_(){
     activityLog = v2 ? JSON.parse(v2) : [];
     const v3 = await storageGet('staffApprovals');
     staffApprovals = v3 ? JSON.parse(v3) : [];
-    render();
+
+    if(currentTab === 'book'){
+      // Data is refreshed, but leave the Order form body alone so an
+      // in-progress order isn't interrupted — just keep the topbar
+      // (Pending count, Synced badge) current, since redrawing that
+      // can't disturb anything someone is typing.
+      renderTopbarRight();
+    } else {
+      // Also leave the screen alone while a text box has focus (e.g. someone
+      // typing in a search box), otherwise the box is rebuilt under them.
+      const ae = document.activeElement;
+      const typing = ae && (ae.tagName==='INPUT' || ae.tagName==='TEXTAREA' || ae.tagName==='SELECT');
+      if(typing) renderTopbarRight(); else render();
+    }
   }catch(e){ console.error('Auto-refresh failed', e); }
 }
 
@@ -1071,6 +1158,12 @@ document.getElementById('bottomNav').addEventListener('click', (e)=>{
   btn.classList.add('active');
   currentTab = btn.dataset.tab;
   render();
+  // Mobile browsers can throttle/pause the 20s background timer whenever the
+  // screen dims or the tab drops out of focus for even a moment, so the data
+  // can go stale without any visible sign. Tapping a tab is a sure sign the
+  // person is actively using the app right now, so pull fresh data on every
+  // tap too — cheap, and it means switching tabs always shows the latest.
+  if(navigator.onLine) silentRefresh_();
 });
 
 function renderTopbarRight(){
@@ -1377,21 +1470,34 @@ async function revokeStaff(email){
 // Lets staff move between the Order form's fields using the keyboard's
 // Up/Down arrow keys instead of having to click each field by hand —
 // Down moves to the next field, Up moves back to the previous one.
-const ORDER_FORM_FIELD_SEQUENCE = ['custName','custBrand','designNo','designColour','sizeVal','qtyVal'];
+const ORDER_FORM_FIELD_SEQUENCE = ['custName','custBrand','designNo','designColour','designPrice','sizeVal','qtyVal'];
+function toggleColourPrice(){
+  hideColourPrice = !hideColourPrice;
+  // Hiding wipes whatever was typed in Colour/Price, so after Unhide both
+  // boxes come back blank — for brands that never need them, that means
+  // nothing stale is ever carried over into the next order.
+  if(hideColourPrice){ tempColour = ''; tempPrice = ''; }
+  render();
+}
 function handleOrderFormArrowNav(e, fieldId){
   if(e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
   e.preventDefault();
   const idx = ORDER_FORM_FIELD_SEQUENCE.indexOf(fieldId);
   if(idx === -1) return;
-  const nextId = ORDER_FORM_FIELD_SEQUENCE[e.key === 'ArrowDown' ? idx + 1 : idx - 1];
-  if(!nextId) return;
-  const el = document.getElementById(nextId);
+  const step = e.key === 'ArrowDown' ? 1 : -1;
+  // skip any field that is currently hidden (Colour/Price can be hidden)
+  let i = idx + step, el = null;
+  while(i >= 0 && i < ORDER_FORM_FIELD_SEQUENCE.length){
+    el = document.getElementById(ORDER_FORM_FIELD_SEQUENCE[i]);
+    if(el) break;
+    i += step;
+  }
   if(el){ el.focus(); if(el.select) el.select(); }
 }
 
 function renderBook(main){
   const cartBlocks = draftCart.map((d, idx)=>{
-    const chips = d.sizes.map((s,si)=>`<span class="chip">${escapeHtml(s.size)} · ${s.qty} <button class="x" onclick="removeCartSize(${idx},${si})">×</button></span>`).join('');
+    const chips = d.sizes.map((s,si)=>`<span class="chip">${escapeHtml(s.size)} · ${s.qty}${s.price ? ' · ₹'+escapeHtml(String(s.price)) : ''} <button class="x" onclick="removeCartSize(${idx},${si})">×</button></span>`).join('');
     return `<div class="design-block">
       <div class="dhead"><span>${t('design_word')} No. ${escapeHtml(d.designNumber)}${d.colour ? ' · '+escapeHtml(d.colour) : ''}</span>
       <button class="chip x" style="border:none;background:none;color:var(--rust);font-weight:700;" onclick="removeCartDesign(${idx})">${t('remove')} ✕</button></div>
@@ -1420,14 +1526,26 @@ function renderBook(main){
       <label><span class="label-dot" style="background:var(--rust);"></span>${t('design_number')}</label>
       <input id="designNo" class="field-rust" list="designList" placeholder="${t('design_ph')}" value="${escapeHtml(tempDesignNumber)}" oninput="tempDesignNumber=this.value" onkeydown="handleOrderFormArrowNav(event,'designNo')">
 
-      <label style="margin-top:10px;">${t('colour_optional')}</label>
-      <input id="designColour" placeholder="${t('colour_ph')}" value="${escapeHtml(tempColour)}" oninput="tempColour=this.value" onkeydown="handleOrderFormArrowNav(event,'designColour')">
+      <div style="display:flex;align-items:flex-end;gap:8px;margin-top:10px;">
+        ${hideColourPrice ? `
+          <button type="button" class="hide-toggle" onclick="toggleColourPrice()">👁 ${t('unhide_word')} ${t('colour_word')} / ${t('price_word')}</button>
+        ` : `
+          <div style="flex:1.5;min-width:0;">
+            <label>${t('colour_optional')}</label>
+            <input id="designColour" placeholder="${t('colour_ph')}" value="${escapeHtml(tempColour)}" oninput="tempColour=this.value" onkeydown="handleOrderFormArrowNav(event,'designColour')">
+          </div>
+          <div style="flex:1;min-width:0;">
+            <label style="font-size:10px;">${t('price_per_pcs')}</label>
+            <input id="designPrice" type="number" inputmode="decimal" min="0" placeholder="₹" value="${escapeHtml(tempPrice)}" oninput="tempPrice=this.value" onkeydown="handleOrderFormArrowNav(event,'designPrice')">
+          </div>
+          <button type="button" class="hide-toggle" onclick="toggleColourPrice()">${t('hide_word')}</button>
+        `}
+      </div>
 
       <label style="margin-top:10px;"><span class="label-dot" style="background:var(--mustard);"></span>${t('size')}</label>
       <div class="row">
         <div class="size-suggest-wrap" id="sizeSuggestWrap">
           <input id="sizeVal" class="field-mustard" placeholder="${t('size_ph')}" autocomplete="off" oninput="filterSizeSuggestions()" onfocus="showSizeSuggestions()" onkeydown="if(event.key==='Enter'){event.preventDefault();addTempSize();}else{handleOrderFormArrowNav(event,'sizeVal')}">
-          <div id="sizeSuggestions" class="size-suggest-dropdown" style="display:none;"></div>
         </div>
         <div style="max-width:80px;">
           <label>${t('set')}</label>
@@ -1435,6 +1553,7 @@ function renderBook(main){
         </div>
         <button class="small btn-inline" onclick="addTempSize()">+</button>
       </div>
+      <div id="sizeSuggestions" class="size-suggest-dropdown" style="display:none;"></div>
       <div style="font-size:12px;color:#7e8896;margin-top:4px;">${t('size_add_hint')}</div>
     </div>
 
@@ -1453,7 +1572,7 @@ function renderSizeSuggestions(filterVal){
   const list = q ? SIZE_PRESETS.filter(s=>s.toLowerCase().includes(q)) : SIZE_PRESETS;
   if(!list.length){ box.style.display = 'none'; return; }
   box.innerHTML = list.map(s=>`<div class="size-suggest-item" onmousedown="event.preventDefault();chooseSizeSuggestion('${s.replace(/'/g,"\\'")}')">${escapeHtml(s)}</div>`).join('');
-  box.style.display = 'block';
+  box.style.display = 'flex';
 }
 function showSizeSuggestions(){
   const el = document.getElementById('sizeVal');
@@ -1474,7 +1593,7 @@ function chooseSizeSuggestion(s){
 document.addEventListener('click', function(e){
   const wrap = document.getElementById('sizeSuggestWrap');
   const box = document.getElementById('sizeSuggestions');
-  if(wrap && box && !wrap.contains(e.target)) box.style.display = 'none';
+  if(wrap && box && !wrap.contains(e.target) && !box.contains(e.target)) box.style.display = 'none';
 });
 
 /* ---------------- AI order-form reading ----------------
@@ -1569,8 +1688,12 @@ function addTempSize(){
   const qtyInput = document.getElementById('qtyVal');
   const designInput = document.getElementById('designNo');
   const colourInput = document.getElementById('designColour');
+  const priceInput = document.getElementById('designPrice');
   const designNo = designInput.value.trim();
-  const colour = colourInput.value.trim();
+  // While Colour/Price are hidden they are ignored, so nothing typed earlier
+  // gets silently attached to an order the person can no longer see it on.
+  const colour = colourInput ? colourInput.value.trim() : '';
+  const price = priceInput ? priceInput.value.trim() : '';
   const size = sizeInput.value.trim();
   const qty = parseInt(qtyInput.value) || 0;
   const msg = document.getElementById('bookMsg');
@@ -1587,7 +1710,7 @@ function addTempSize(){
     entry = { designNumber: designNo, colour: colour, sizes: [] };
     draftCart.push(entry);
   }
-  entry.sizes.push({ size, qty });
+  entry.sizes.push({ size, qty, price });
 
   sizeInput.value = '';
   qtyInput.value = '1';
@@ -1636,6 +1759,7 @@ async function saveOrder(){
           colour: d.colour || '',
           size: s.size,
           qty: s.qty,
+          pricePerPcs: s.price || '',
           status: 'pending',
           orderedAt: now,
           dispatchedAt: null,
@@ -1643,39 +1767,54 @@ async function saveOrder(){
         });
       });
     });
-    await saveData();
+    // Start saving (the local copy is written instantly; the cloud upload
+    // carries on in the background) and open the WhatsApp share sheet RIGHT
+    // NOW, while the phone still counts this as a fresh tap. If we waited
+    // for the cloud save first, a slow network let that tap "expire" and the
+    // phone refused to open the share sheet directly — that was the reason
+    // it only sometimes went straight to WhatsApp.
+    const savePromise = saveData();
+    const justSavedRows = bookings.filter(b=>b.customerName===custName && b.orderedAt===now);
+    const sharePromise = shareNewOrderPdf(custName, justSavedRows, totalSets);
+    await savePromise;
 
     const count = draftCart.length;
     await logActivity('Order Booked', `${custName}${custBrand ? ' ('+custBrand+')' : ''} — ${count} design(s), ${totalSets} sets`);
-
-    // Grab exactly the rows just created (matched by this save's timestamp)
-    // before clearing the form, so we can hand them straight to WhatsApp.
-    const justSavedRows = bookings.filter(b=>b.customerName===custName && b.orderedAt===now);
 
     draftCart = [];
     draftCustomer = '';
     draftBrand = '';
     tempDesignNumber = '';
     tempColour = '';
+    tempPrice = '';
     tempSizes = [];
     render();
     const m2 = document.getElementById('bookMsg');
     if(m2) m2.innerHTML = `<div class="msg ok">${count} ${t('designs_saved')}</div>`;
 
-    // Order saved — immediately build the PDF and hand it to WhatsApp, so
-    // the salesman doesn't have to go find it in the Pending tab afterwards.
-    await shareNewOrderPdf(custName, justSavedRows, totalSets);
+    await sharePromise;
   } finally {
     isSavingOrder = false;
   }
 }
 
+// Upper-cases and tidies a name for use inside a file name; with
+// firstWordOnly, "Grab-it" / "Grab it" both become just "GRAB".
+function pdfNamePart_(txt, firstWordOnly){
+  let x = (txt || '').trim();
+  if(firstWordOnly) x = x.split(/[\s\-_\/,.&]+/)[0] || '';
+  return x.toUpperCase().replace(/[^A-Z0-9\u0900-\u097F]+/g, '_').replace(/^_+|_+$/g, '');
+}
+
 async function shareNewOrderPdf(cname, rows, total){
   if(!rows.length) return;
   const tableRows = rows.map(b=>[b.designNumber, b.colour||'-', b.size, b.brand||'-', String(b.qty)]);
-  const blob = buildPdfBlob(`${t('pending_order')} — ${cname}`, `Subhash Sales Agencies · ${new Date().toLocaleDateString('en-IN')}`, ['Design Number','Colour','Size','Brand','Set'], tableRows, `${t('total')}: ${total} ${t('sets')}`);
+  const pp = pdfWithPrice_(['Design Number','Colour','Size','Brand','Set'], tableRows, rows, 'Set');
+  const blob = buildPdfBlob(`${t('pending_order')} — ${cname}`, `Subhash Sales Agencies · ${new Date().toLocaleDateString('en-IN')}`, pp.columns, pp.tableRows, `${t('total')}: ${total} ${t('sets')}`);
   if(!blob) return;
-  await sharePdfBlob(blob, `Order-${cname.replace(/[^a-z0-9]/gi,'_')}-new.pdf`, `Order — ${cname}`, `New Order — ${cname}, ${t('total')} ${total} ${t('sets')}`);
+  const brandPart = pdfNamePart_(rows[0].brand, true);
+  const fileName = `Order_${pdfNamePart_(cname, false) || 'CUSTOMER'}${brandPart ? '_'+brandPart : ''}.pdf`;
+  await sharePdfBlob(blob, fileName, `Order — ${cname}`, `New Order — ${cname}, ${t('total')} ${total} ${t('sets')}`);
 }
 
 /* ---------------- ARTICLE (DISPATCH) SEARCH TAB ---------------- */
@@ -1691,7 +1830,9 @@ function inDispatchDateRange(iso){
 
 function renderDispatch(main){
   const activeBookings = bookings.filter(b=>!b.trashed);
-  const allDesigns = [...new Set(activeBookings.map(b=>b.designNumber))];
+  // Include designs that only exist in deleted orders too, so searching an
+  // article whose every order was deleted still shows who had ordered it.
+  const allDesigns = [...new Set(bookings.map(b=>b.designNumber))];
 
   let resultsHtml = '';
   let exactDesign = null;
@@ -1770,7 +1911,7 @@ function renderDispatch(main){
         <div class="cust-head"><span class="name">${escapeHtml(cname)} <span style="font-size:11.5px;font-weight:500;color:#8a93a0;margin-left:6px;">${orderDates.map(escapeHtml).join(', ')}</span></span>${allDone ? `<span class="set-pill done">${t('fully_dispatched')}</span>` : ''}</div>
         ${groupsHtml}
       </div>`;
-    }).join('') : `<div class="empty">${t('no_article_found')}</div>`;
+    }).join('') : '';
 
     // Parties whose order for this article was moved to Deleted — shown
     // greyed out (like a fully-dispatched card) with their actual size/qty
@@ -1813,6 +1954,7 @@ function renderDispatch(main){
       </div>`;
     }).join('');
 
+    const noActiveMsg = (!customers.length && !trashedCustomerNames.length) ? `<div class="empty">${t('no_article_found')}</div>` : '';
     const allColours = [...new Set(matches.map(b=>b.colour).filter(Boolean))];
     const allBrands = [...new Set(matches.map(b=>b.brand).filter(Boolean))];
     resultsHtml = `
@@ -1828,6 +1970,7 @@ function renderDispatch(main){
         </div>
       </div>
       ${custCards}
+      ${noActiveMsg}
       ${trashedCardsHtml}
     `;
   } else if(!hasArticleQuery && hasBrandQuery){
@@ -1928,8 +2071,20 @@ function renderDispatch(main){
       <label style="margin-top:10px;">${t('to_date')} (${t('optional_word')})</label>
       <input id="dispatchToDate" type="date" value="${escapeHtml(dispatchToDate)}" oninput="onDispatchDateRange('to', this.value)">
     </div>
-    ${resultsHtml}
+    <div id="dispatchResults">${resultsHtml}</div>
   `;
+}
+
+// Rebuilds only the results area below the search boxes, leaving the text
+// box the person is typing in completely untouched — that is what stops the
+// mobile keyboard from hiding/reappearing on every digit typed.
+function refreshDispatchResultsOnly_(){
+  const live = document.getElementById('dispatchResults');
+  if(!live){ render(); return; }
+  const tmp = document.createElement('div');
+  renderDispatch(tmp);
+  const fresh = tmp.querySelector('#dispatchResults');
+  if(fresh) live.innerHTML = fresh.innerHTML; else render();
 }
 
 function setDispatchBrandView(view){
@@ -1951,11 +2106,12 @@ function printBrandOverview(){
   if(!matches.length){ alert(t('no_brand_orders')); return; }
   const totalSets = matches.reduce((s,b)=>s+b.qty,0);
   const rows = matches.map(b=>[b.designNumber, b.colour||'-', b.customerName, b.size, String(b.qty), b.status==='dispatched'?t('dispatched'):t('badge_pending')]);
+  const pp = pdfWithPrice_(['Article','Colour','Customer','Size','Set','Status'], rows, matches, 'Set');
   let dateNote = '';
   if(dispatchFromDate || dispatchToDate){
     dateNote = ` (${dispatchFromDate ? dispatchDateLabel(dispatchFromDate) : '…'} – ${dispatchToDate ? dispatchDateLabel(dispatchToDate) : '…'})`;
   }
-  const blob = buildPdfBlob(`${t('brand_overview')}: ${bq}${dateNote}`, `Subhash Sales Agencies · ${new Date().toLocaleDateString('en-IN')}`, ['Article','Colour','Customer','Size','Set','Status'], rows, `${t('total')}: ${totalSets} ${t('sets')}`);
+  const blob = buildPdfBlob(`${t('brand_overview')}: ${bq}${dateNote}`, `Subhash Sales Agencies · ${new Date().toLocaleDateString('en-IN')}`, pp.columns, pp.tableRows, `${t('total')}: ${totalSets} ${t('sets')}`);
   if(!blob){ alert(t('pdf_gen_fail')); return; }
   openPdfBlob(blob, `Brand-${bq.replace(/[^a-z0-9]/gi,'_')}.pdf`);
 }
@@ -1994,13 +2150,11 @@ function downloadBrandExcel(){
   XLSX.writeFile(wb, `Brand-${bq.replace(/[^a-z0-9]/gi,'_')}.xlsx`);
 }
 
+let dispatchBrandDebounce_ = null;
 function onDispatchBrandSearch(val){
   dispatchBrandQuery = val;
-  render();
-  setTimeout(()=>{
-    const el = document.getElementById('dispatchBrandSearch');
-    if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
-  }, 0);
+  clearTimeout(dispatchBrandDebounce_);
+  dispatchBrandDebounce_ = setTimeout(refreshDispatchResultsOnly_, 120);
 }
 
 function pickDesign(fullDesign){
@@ -2016,14 +2170,12 @@ function clearDesignSelection(){
   setTimeout(()=>{ const el = document.getElementById('dispatchSearch'); if(el) el.focus(); }, 0);
 }
 
+let dispatchSearchDebounce_ = null;
 function onDispatchSearch(val){
   dispatchQuery = val;
   selectedDesign = null;
-  render();
-  setTimeout(()=>{
-    const el = document.getElementById('dispatchSearch');
-    if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
-  }, 0);
+  clearTimeout(dispatchSearchDebounce_);
+  dispatchSearchDebounce_ = setTimeout(refreshDispatchResultsOnly_, 120);
 }
 
 async function dispatchOne(bookingId){
@@ -2159,8 +2311,9 @@ function buildDatedOrderPdf(cname, dk){
   const rows = getDatedRows(cname, dk);
   const total = rows.reduce((s,b)=>s+b.qty,0);
   const tableRows = rows.map(b=>[b.designNumber, b.colour||'-', b.size, b.brand||'-', String(b.qty)]);
+  const pp = pdfWithPrice_(['Design Number','Colour','Size','Brand','Set'], tableRows, rows, 'Set');
   return {
-    blob: buildPdfBlob(`Order — ${cname}`, `Subhash Sales Agencies · Dispatch Date: ${dispatchDateLabel(dk)}`, ['Design Number','Colour','Size','Brand','Set'], tableRows, `Total: ${total} Sets`),
+    blob: buildPdfBlob(`Order — ${cname}`, `Subhash Sales Agencies · Dispatch Date: ${dispatchDateLabel(dk)}`, pp.columns, pp.tableRows, `Total: ${total} Sets`),
     total
   };
 }
@@ -2391,8 +2544,9 @@ function buildPendingOrderPdfDated(cname, dk){
   const rows = getPendingDatedRows(cname, dk);
   const total = rows.reduce((s,b)=>s+b.qty,0);
   const tableRows = rows.map(b=>[b.designNumber, b.colour||'-', b.size, b.brand||'-', String(b.qty)]);
+  const pp = pdfWithPrice_(['Design Number','Colour','Size','Brand','Set'], tableRows, rows, 'Set');
   return {
-    blob: buildPdfBlob(`${t('pending_order')} — ${cname}`, `Subhash Sales Agencies · ${dispatchDateLabel(dk)}`, ['Design Number','Colour','Size','Brand','Set'], tableRows, `${t('total')}: ${total} ${t('sets')}`),
+    blob: buildPdfBlob(`${t('pending_order')} — ${cname}`, `Subhash Sales Agencies · ${dispatchDateLabel(dk)}`, pp.columns, pp.tableRows, `${t('total')}: ${total} ${t('sets')}`),
     total
   };
 }
@@ -2430,8 +2584,9 @@ function buildPendingOrderPdf(cname){
     .sort((a,b)=>(a.designNumber).localeCompare(b.designNumber));
   const total = rows.reduce((s,b)=>s+b.qty,0);
   const tableRows = rows.map(b=>[b.designNumber, b.colour||'-', b.size, b.brand||'-', String(b.qty)]);
+  const pp = pdfWithPrice_(['Design Number','Colour','Size','Brand','Set'], tableRows, rows, 'Set');
   return {
-    blob: buildPdfBlob(`${t('pending_order')} — ${cname}`, `Subhash Sales Agencies · ${new Date().toLocaleDateString('en-IN')}`, ['Design Number','Colour','Size','Brand','Set'], tableRows, `${t('total')}: ${total} ${t('sets')}`),
+    blob: buildPdfBlob(`${t('pending_order')} — ${cname}`, `Subhash Sales Agencies · ${new Date().toLocaleDateString('en-IN')}`, pp.columns, pp.tableRows, `${t('total')}: ${total} ${t('sets')}`),
     total
   };
 }
@@ -2522,8 +2677,9 @@ function buildCustomerOrderPdf(cname){
   // customer has ever placed, so staff need to see which line came from
   // which date, not just the design/size/status.
   const tableRows = rows.map(b=>[dispatchDateLabel(dispatchDateKey(b.orderedAt)), b.designNumber, b.colour||'-', b.size, b.brand||'-', String(b.qty), b.status==='dispatched'?'Dispatched':'Pending']);
+  const pp = pdfWithPrice_(['Date','Design Number','Colour','Size','Brand','Set','Status'], tableRows, rows, 'Set');
   return {
-    blob: buildPdfBlob(`Order — ${cname}`, `Subhash Sales Agencies · ${new Date().toLocaleDateString('en-IN')}`, ['Date','Design Number','Colour','Size','Brand','Set','Status'], tableRows, `Total: ${total} Sets`),
+    blob: buildPdfBlob(`Order — ${cname}`, `Subhash Sales Agencies · ${new Date().toLocaleDateString('en-IN')}`, pp.columns, pp.tableRows, `Total: ${total} Sets`),
     total
   };
 }
@@ -2712,11 +2868,18 @@ function renderDeletedOrders(main){
 
 /* ---------------- ACTIVITY LOG TAB ---------------- */
 
+function activityMatchesStaff_(a){
+  const q = activitySearchStaff.trim().toLowerCase();
+  if(!q) return true;
+  return (a.staffName||'').toLowerCase().includes(q) || (a.staffMobile||'').toLowerCase().includes(q);
+}
+
 function renderActivity(main){
   let filtered = activityLog;
   if(activityDateFilter){
     filtered = filtered.filter(a=>dispatchDateKey(a.timestamp)===activityDateFilter);
   }
+  filtered = filtered.filter(activityMatchesStaff_);
 
   const selectedCount = filtered.filter(a=>activitySelected.has(a.id)).length;
   const allSelected = filtered.length > 0 && selectedCount === filtered.length;
@@ -2724,6 +2887,7 @@ function renderActivity(main){
   const filterBar = `
     <div class="card">
       <h2>${t('staff_activity')} (${filtered.length})</h2>
+      <input id="activityStaffSearch" placeholder="${t('staff_search_ph')}" value="${escapeHtml(activitySearchStaff)}" oninput="onActivityStaffSearch(this.value)" style="margin-bottom:10px;">
       <label>${t('by_date')}</label>
       <input id="activityDateFilter" type="date" value="${escapeHtml(activityDateFilter)}" oninput="onActivityDateFilter(this.value)">
       <button class="secondary" style="margin-top:10px;" onclick="shareActivityWhatsApp()">${t('share_whatsapp_pdf')}</button>
@@ -2769,6 +2933,7 @@ function toggleSelectAllActivity(checked){
   if(activityDateFilter){
     filtered = filtered.filter(a=>dispatchDateKey(a.timestamp)===activityDateFilter);
   }
+  filtered = filtered.filter(activityMatchesStaff_);
   if(checked) filtered.forEach(a=>activitySelected.add(a.id));
   else filtered.forEach(a=>activitySelected.delete(a.id));
   render();
@@ -2785,6 +2950,17 @@ async function deleteSelectedActivity(){
   render();
 }
 
+let activityStaffDebounce_ = null;
+function onActivityStaffSearch(val){
+  activitySearchStaff = val;
+  clearTimeout(activityStaffDebounce_);
+  activityStaffDebounce_ = setTimeout(()=>{
+    render();
+    const el = document.getElementById('activityStaffSearch');
+    if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
+  }, 250);
+}
+
 function onActivityDateFilter(val){
   activityDateFilter = val;
   render();
@@ -2795,6 +2971,7 @@ async function shareActivityWhatsApp(){
   let filtered = activityLog;
 
   if(activityDateFilter) filtered = filtered.filter(a=>dispatchDateKey(a.timestamp)===activityDateFilter);
+  filtered = filtered.filter(activityMatchesStaff_);
   if(!filtered.length){ alert(t('no_activity_share')); return; }
   const rows = filtered.map(a=>[a.staffName, fmtTime(a.timestamp), a.action, a.detail]);
   const title = `${t('staff_activity')}${activityDateFilter ? ' — '+dispatchDateLabel(activityDateFilter) : ''}`;
