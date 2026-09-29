@@ -897,7 +897,15 @@ async function storageGet(key){
     try{
       const res = await fetch(`${SHEET_SCRIPT_URL}?key=${encodeURIComponent(key)}`);
       const data = await res.json();
-      if(data && data.value !== null && data.value !== undefined) return data.value;
+      if(data && data.value !== null && data.value !== undefined){
+        // Cache every successful online read locally too — not just what
+        // this device itself saves. Otherwise a staff member who only ever
+        // READS staffApprovals (never writes it) has nothing cached for
+        // when they go offline, and the app falls back to showing no
+        // approved tabs at all even though the owner granted them access.
+        try{ localStorage.setItem('ssa_'+key, data.value); }catch(e){}
+        return data.value;
+      }
       return null;
     }catch(e){ console.error('Sheet fetch failed, using local backup', e); }
   }
@@ -1754,6 +1762,43 @@ function applyAiExtractedOrder_(data){
   render();
 }
 
+// A single typed range that actually spans several standard sizes (e.g.
+// "20/36") gets split into the individual sizes that make it up (20/24,
+// 26/30, 32/36), so typing the full range once still saves each size as
+// its own separate line, same as adding them one at a time. A normal
+// single size like "20/24" (span 4 or less) is left exactly as typed.
+function expandSizeRange_(token){
+  const m = token.match(/^(\d+)\s*\/\s*(\d+)$/);
+  if(!m) return [token];
+  const start = parseInt(m[1],10), end = parseInt(m[2],10);
+  if(!(end > start) || (end - start) <= 4) return [token];
+
+  // Small ranges starting at 2 read as an AGE range (years), which this
+  // trade groups into a fixed, irregular set of brackets rather than a
+  // uniform measurement step. Any end point just takes as many of these
+  // fixed brackets as fit, clipping the last one to the given end (so
+  // "2/14" correctly stops at "9/14" instead of continuing to "15/16").
+  if(start === 2){
+    const AGE_BRACKETS = [[2,5],[6,8],[9,14],[15,16]];
+    const out = [];
+    for(const [bs,be] of AGE_BRACKETS){
+      if(bs > end) break;
+      out.push(`${bs}/${Math.min(be,end)}`);
+      if(be >= end) break;
+    }
+    return out.length ? out : [token];
+  }
+
+  // General case: 4-unit size spans, 6-unit steps (20/24, 26/30, 32/36 ...).
+  const out = [];
+  let g = start;
+  while(g <= end){
+    out.push(`${g}/${Math.min(g+4, end)}`);
+    g += 6;
+  }
+  return out;
+}
+
 function addTempSize(){
   const sizeInput = document.getElementById('sizeVal');
   const qtyInput = document.getElementById('qtyVal');
@@ -1772,7 +1817,8 @@ function addTempSize(){
   // Several sizes can be typed in one go, separated by spaces and/or commas
   // (e.g. "18/22 24/28 30/34") — each becomes its own line, all at the same
   // Set count, so a multi-size design can be added in a single tap.
-  const sizes = rawSize.split(/[\s,]+/).map(s=>s.trim()).filter(Boolean);
+  const sizes = rawSize.split(/[\s,]+/).map(s=>s.trim()).filter(Boolean)
+    .reduce((acc,tok)=>acc.concat(expandSizeRange_(tok)), []);
   if(!sizes.length || qty <= 0){
     msg.innerHTML = `<div class="msg err">${t('size_qty_err')}</div>`;
     return;
@@ -2333,7 +2379,15 @@ function renderDispatchedOrders(main){
     const dateKeys = Object.keys(dateGroups).sort((a,b)=>b.localeCompare(a));
     resultsHtml = dateKeys.map(dk=>{
       const custMap = dateGroups[dk];
-      const custCards = Object.keys(custMap).map(cname=>{
+      // Whoever's item was dispatched most recently shows first, so ticking
+      // off orders one by one keeps moving the latest one to the top
+      // instead of it settling at the bottom of the day's list.
+      const custNamesSorted = Object.keys(custMap).sort((a,b)=>{
+        const maxA = Math.max(...custMap[a].map(r=>new Date(r.dispatchedAt).getTime()));
+        const maxB = Math.max(...custMap[b].map(r=>new Date(r.dispatchedAt).getTime()));
+        return maxB - maxA;
+      });
+      const custCards = custNamesSorted.map(cname=>{
         const rows = custMap[cname].sort((a,b)=>(a.designNumber).localeCompare(b.designNumber));
         const total = rows.reduce((s,b)=>s+b.qty,0);
         const brands = [...new Set(rows.map(b=>b.brand).filter(Boolean))].join(', ');
