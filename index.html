@@ -519,6 +519,20 @@ async function toggleTabPermission(email, tabKey){
 }
 
 function uid(){ return 'b' + Math.random().toString(36).slice(2,10); }
+
+// Gives instant feedback the moment someone taps a button that then has to
+// wait on a network round-trip (delete/restore/dispatch/approve etc.) —
+// disables the exact button clicked and swaps its label, so it's obvious
+// something is happening rather than the screen just sitting there until
+// the whole tab re-renders a second or two later.
+function markBusy(label){
+  try{
+    const ev = (typeof event !== 'undefined') ? event : null;
+    const btn = ev && ev.target && ev.target.closest ? ev.target.closest('button') : null;
+    if(btn && !btn.disabled){ btn.disabled = true; btn.textContent = label; }
+    return btn;
+  }catch(e){ return null; }
+}
 function escapeHtml(str){
   return String(str).replace(/[&<>"']/g, m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 }
@@ -613,7 +627,7 @@ const I18N = {
     bulk_confirm_3:'FINAL CONFIRMATION — this cannot be undone easily. Delete',
 
     design_word:'Design', pdf_gen_fail:'Could not generate the PDF. Please check your internet connection and try again.',
-    loading_word:'Loading...', saving_word:'Saving...',
+    loading_word:'Loading...', saving_word:'Saving...', deleting_word:'Deleting...', restoring_word:'Restoring...', processing_word:'Processing...',
     lang_toggle:'हिं',
   },
   hi: {
@@ -696,7 +710,7 @@ const I18N = {
     bulk_confirm_3:'आखिरी पुष्टि — यह आसानी से वापस नहीं होगा। डिलीट करें',
 
     design_word:'डिज़ाइन', pdf_gen_fail:'PDF नहीं बन पाई। इंटरनेट चेक करके दोबारा कोशिश करें।',
-    loading_word:'लोड हो रहा है...', saving_word:'सेव हो रहा है...',
+    loading_word:'लोड हो रहा है...', saving_word:'सेव हो रहा है...', deleting_word:'डिलीट हो रहा है...', restoring_word:'वापस लाया जा रहा है...', processing_word:'प्रोसेस हो रहा है...',
     lang_toggle:'EN',
   }
 };
@@ -1427,6 +1441,7 @@ function renderApprovals(main){
 async function approveStaff(email){
   const s = staffApprovals.find(x=>x.email===email);
   if(!s) return;
+  markBusy(t('processing_word'));
   s.status = 'approved';
   s.approvedAt = new Date().toISOString();
   if(s.canDelete === undefined) s.canDelete = false; // owner must explicitly grant delete rights
@@ -1439,6 +1454,7 @@ async function approveStaff(email){
 async function toggleDeletePermission(email){
   const s = staffApprovals.find(x=>x.email===email);
   if(!s) return;
+  markBusy(t('processing_word'));
   s.canDelete = !s.canDelete;
   await saveApprovals();
   await logActivity(s.canDelete ? 'Delete Access Granted' : 'Delete Access Blocked', `${s.name} (${email})`);
@@ -1449,6 +1465,7 @@ async function rejectStaff(email){
   const s = staffApprovals.find(x=>x.email===email);
   if(!s) return;
   if(!confirm(`${t('reject_confirm')} ${s.name} (${email})?`)) return;
+  markBusy(t('processing_word'));
   s.status = 'rejected';
   await saveApprovals();
   await logActivity('Staff Rejected', `${s.name} (${email})`);
@@ -1459,6 +1476,7 @@ async function revokeStaff(email){
   const s = staffApprovals.find(x=>x.email===email);
   if(!s) return;
   if(!confirm(`${t('revoke_confirm')} ${s.name} (${email})? ${t('revoke_confirm2')}`)) return;
+  markBusy(t('processing_word'));
   s.status = 'rejected';
   await saveApprovals();
   await logActivity('Staff Access Revoked', `${s.name} (${email})`);
@@ -1747,29 +1765,38 @@ function addTempSize(){
   // gets silently attached to an order the person can no longer see it on.
   const colour = colourInput ? colourInput.value.trim() : '';
   const price = priceInput ? priceInput.value.trim() : '';
-  const size = sizeInput.value.trim();
+  const rawSize = sizeInput.value.trim();
   const qty = parseInt(qtyInput.value) || 0;
   const msg = document.getElementById('bookMsg');
   if(!designNo){ msg.innerHTML = `<div class="msg err">${t('enter_design_err')}</div>`; return; }
-  if(!size || qty <= 0){
+  // Several sizes can be typed in one go, separated by spaces and/or commas
+  // (e.g. "18/22 24/28 30/34") — each becomes its own line, all at the same
+  // Set count, so a multi-size design can be added in a single tap.
+  const sizes = rawSize.split(/[\s,]+/).map(s=>s.trim()).filter(Boolean);
+  if(!sizes.length || qty <= 0){
     msg.innerHTML = `<div class="msg err">${t('size_qty_err')}</div>`;
     return;
   }
   // Goes straight into the order — no separate "Add this design" step. If
-  // this same design+colour is already in the cart, the new size just joins
-  // it; otherwise a new design block is started.
+  // this same design+colour is already in the cart, the new size(s) just
+  // join it; otherwise a new design block is started.
   let entry = draftCart.find(d=>d.designNumber===designNo && (d.colour||'')===colour);
   if(!entry){
     entry = { designNumber: designNo, colour: colour, sizes: [] };
     draftCart.push(entry);
   }
-  entry.sizes.push({ size, qty, price });
+  sizes.forEach(size=>{ entry.sizes.push({ size, qty, price }); });
 
   sizeInput.value = '';
   qtyInput.value = '1';
   msg.innerHTML = '';
   render();
-  setTimeout(()=>{ const el=document.getElementById('sizeVal'); if(el) el.focus(); }, 0);
+  // Cursor goes back to Design Number (not Size) — the common next step is
+  // starting the NEXT design, since one tap now covers every size at once.
+  setTimeout(()=>{
+    const el=document.getElementById('designNo');
+    if(el){ el.focus(); el.select(); }
+  }, 0);
 }
 
 function removeCartSize(designIdx, sizeIdx){
@@ -2234,6 +2261,7 @@ function onDispatchSearch(val){
 async function dispatchOne(bookingId){
   const b = bookings.find(x=>x.id===bookingId);
   if(!b || b.status==='dispatched') return;
+  markBusy(t('processing_word'));
   b.status = 'dispatched';
   b.dispatchedAt = new Date().toISOString();
   b.dispatchedBy = currentStaff ? { name: currentStaff.name, mobile: currentStaff.mobile } : null;
@@ -2385,6 +2413,7 @@ async function shareWhatsAppDated(cname, dk){
 
 async function deleteOrderDated(cname, dk){
   if(!canCurrentUserDelete()){ alert(t('delete_not_allowed')); return; }
+  markBusy(t('deleting_word'));
   let total = 0;
   bookings.forEach(b=>{
     if(b.customerName===cname && b.status==='dispatched' && !b.trashed && dispatchDateKey(b.dispatchedAt)===dk){
@@ -2400,6 +2429,7 @@ async function deleteOrderDated(cname, dk){
 }
 
 async function restoreOrder(cname){
+  markBusy(t('restoring_word'));
   let total = 0;
   bookings.forEach(b=>{
     if(b.customerName===cname && b.trashed){
@@ -2416,6 +2446,7 @@ async function restoreOrder(cname){
 async function permanentDeleteOrder(cname){
   if(!canCurrentUserDelete()){ alert(t('delete_not_allowed')); return; }
   if(!confirm(`${cname} — ${t('perm_delete_confirm')}`)) return;
+  markBusy(t('deleting_word'));
   let total = 0;
   bookings = bookings.filter(b=>{
     if(b.customerName===cname && b.trashed){ total += b.qty; return false; }
@@ -2618,6 +2649,7 @@ async function shareWhatsAppPendingDated(cname, dk){
 
 async function deletePendingOrderDated(cname, dk){
   if(!canCurrentUserDelete()){ alert(t('delete_not_allowed')); return; }
+  markBusy(t('deleting_word'));
   let total = 0;
   bookings.forEach(b=>{
     if(b.customerName===cname && b.status==='pending' && !b.trashed && dispatchDateKey(b.orderedAt)===dk){
@@ -2673,6 +2705,7 @@ function onPdSearch(which, val){
 async function deletePendingOrder(cname){
   if(!canCurrentUserDelete()){ alert(t('delete_not_allowed')); return; }
   if(!confirm(`${t('delete_confirm_1')} ${cname}?`)) return;
+  markBusy(t('deleting_word'));
   let rows = bookings.filter(b=>b.status==='pending' && !b.trashed && b.customerName===cname);
   if(pdSearchBrand.trim()){
     const bq = pdSearchBrand.trim().toLowerCase();
@@ -2700,6 +2733,7 @@ async function deleteAllByBrand(){
   const bql = bq.toLowerCase();
   const matches = bookings.filter(b=>b.status==='pending' && !b.trashed && (b.brand||'').toLowerCase().includes(bql));
   if(!matches.length){ alert(t('no_pending_for_brand')); return; }
+  markBusy(t('deleting_word'));
   const custCount = new Set(matches.map(b=>b.customerName)).size;
   const totalSets = matches.reduce((s,b)=>s+b.qty,0);
 
@@ -2751,6 +2785,7 @@ function printCustomerOrder(cname){
 
 async function deleteCustomerOrderFull(cname){
   if(!canCurrentUserDelete()){ alert(t('delete_not_allowed')); return; }
+  markBusy(t('deleting_word'));
   let total = 0;
   bookings.forEach(b=>{
     if(b.customerName===cname && !b.trashed){
@@ -2879,6 +2914,7 @@ async function undoDispatch(bookingId){
   event.stopPropagation();
   const b = bookings.find(x=>x.id===bookingId);
   if(!b) return;
+  markBusy(t('processing_word'));
   b.status = 'pending';
   b.dispatchedAt = null;
   await saveData();
@@ -2997,6 +3033,7 @@ async function deleteSelectedActivity(){
   const count = activitySelected.size;
   if(!count) return;
   if(!confirm(`${t('delete_confirm_1')} ${count} ${t('activity_entries')}?`)) return;
+  markBusy(t('deleting_word'));
   activityLog = activityLog.filter(a=>!activitySelected.has(a.id));
   activitySelected.clear();
   await saveActivity();
