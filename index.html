@@ -1496,7 +1496,7 @@ async function revokeStaff(email){
 // Lets staff move between the Order form's fields using the keyboard's
 // Up/Down arrow keys instead of having to click each field by hand —
 // Down moves to the next field, Up moves back to the previous one.
-const ORDER_FORM_FIELD_SEQUENCE = ['custName','custBrand','designNo','designColour','designPrice','sizeVal','qtyVal'];
+const ORDER_FORM_FIELD_SEQUENCE = ['custName','custBrand','designNo','sizeVal','qtyVal','designColour','designPrice'];
 function toggleColourPrice(){
   hideColourPrice = !hideColourPrice;
   // Hiding wipes whatever was typed in Colour/Price, so after Unhide both
@@ -1552,7 +1552,18 @@ function renderBook(main){
       <label><span class="label-dot" style="background:var(--rust);"></span>${t('design_number')}</label>
       <input id="designNo" class="field-rust" list="designList" placeholder="${t('design_ph')}" value="${escapeHtml(tempDesignNumber)}" oninput="tempDesignNumber=this.value" onkeydown="handleOrderFormArrowNav(event,'designNo')">
 
-      <div style="display:flex;align-items:flex-end;gap:8px;margin-top:10px;">
+      <label style="margin-top:10px;"><span class="label-dot" style="background:var(--mustard);"></span>${t('size')}</label>
+      <div class="row">
+        <input id="sizeVal" class="field-mustard" placeholder="${t('size_ph')}" autocomplete="off" onkeydown="if(event.key==='Enter'){event.preventDefault();addTempSize();}else{handleOrderFormArrowNav(event,'sizeVal')}">
+        <div style="max-width:80px;">
+          <label>${t('set')}</label>
+          <input id="qtyVal" type="number" min="1" value="1" onkeydown="if(event.key==='Enter'){event.preventDefault();addTempSize();}else{handleOrderFormArrowNav(event,'qtyVal')}">
+        </div>
+        <button class="small btn-inline" onclick="addTempSize()">+</button>
+      </div>
+      <div style="font-size:12px;color:#7e8896;margin-top:4px;">${t('size_add_hint')}</div>
+
+      <div style="display:flex;align-items:flex-end;gap:8px;margin-top:14px;">
         ${hideColourPrice ? `
           <button type="button" class="hide-toggle" onclick="toggleColourPrice()">👁 ${t('unhide_word')} ${t('colour_word')} / ${t('price_word')}</button>
         ` : `
@@ -1567,20 +1578,6 @@ function renderBook(main){
           <button type="button" class="hide-toggle" onclick="toggleColourPrice()">${t('hide_word')}</button>
         `}
       </div>
-
-      <label style="margin-top:10px;"><span class="label-dot" style="background:var(--mustard);"></span>${t('size')}</label>
-      <div class="row">
-        <div class="size-suggest-wrap" id="sizeSuggestWrap">
-          <input id="sizeVal" class="field-mustard" placeholder="${t('size_ph')}" autocomplete="off" oninput="filterSizeSuggestions()" onfocus="showSizeSuggestions()" onkeydown="if(event.key==='Enter'){event.preventDefault();addTempSize();}else{handleOrderFormArrowNav(event,'sizeVal')}">
-        </div>
-        <div style="max-width:80px;">
-          <label>${t('set')}</label>
-          <input id="qtyVal" type="number" min="1" value="1" onkeydown="if(event.key==='Enter'){event.preventDefault();addTempSize();}else{handleOrderFormArrowNav(event,'qtyVal')}">
-        </div>
-        <button class="small btn-inline" onclick="addTempSize()">+</button>
-      </div>
-      <div id="sizeSuggestions" class="size-suggest-dropdown" style="display:none;"></div>
-      <div style="font-size:12px;color:#7e8896;margin-top:4px;">${t('size_add_hint')}</div>
     </div>
 
     <div class="card">
@@ -1757,46 +1754,84 @@ function applyAiExtractedOrder_(data){
       entry = { designNumber: designNo, colour: colour, sizes: [] };
       draftCart.push(entry);
     }
-    entry.sizes.push({ size, qty });
+    // A combined range read off the order form (e.g. "20/36") gets split
+    // into its component sizes here too, exactly like typing it manually.
+    expandSizeRange_(size).forEach(sz => entry.sizes.push({ size: sz, qty }));
   });
   render();
 }
 
-// A single typed range that actually spans several standard sizes (e.g.
-// "20/36") gets split into the individual sizes that make it up (20/24,
-// 26/30, 32/36), so typing the full range once still saves each size as
-// its own separate line, same as adding them one at a time. A normal
-// single size like "20/24" (span 4 or less) is left exactly as typed.
-function expandSizeRange_(token){
-  const m = token.match(/^(\d+)\s*\/\s*(\d+)$/);
-  if(!m) return [token];
-  const start = parseInt(m[1],10), end = parseInt(m[2],10);
-  if(!(end > start) || (end - start) <= 4) return [token];
+// The fixed, irregular age-bracket table this trade uses for kids' years
+// (2 to 16) — not a uniform step, so it's kept as an explicit list rather
+// than computed.
+const AGE_BRACKETS_ = [[2,5],[6,8],[9,14],[15,16]];
 
-  // Small ranges starting at 2 read as an AGE range (years), which this
-  // trade groups into a fixed, irregular set of brackets rather than a
-  // uniform measurement step. Any end point just takes as many of these
-  // fixed brackets as fit, clipping the last one to the given end (so
-  // "2/14" correctly stops at "9/14" instead of continuing to "15/16").
-  if(start === 2){
-    const AGE_BRACKETS = [[2,5],[6,8],[9,14],[15,16]];
-    const out = [];
-    for(const [bs,be] of AGE_BRACKETS){
-      if(bs > end) break;
-      out.push(`${bs}/${Math.min(be,end)}`);
-      if(be >= end) break;
-    }
-    return out.length ? out : [token];
+// Walks AGE_BRACKETS_, keeping every bracket that starts at or after
+// `start`, up to (and clipped to) `end`. e.g. walkAgeBrackets_(9,16) →
+// ["9/14","15/16"]; walkAgeBrackets_(2,14) → ["2/5","6/8","9/14"].
+function walkAgeBrackets_(start, end){
+  const out = [];
+  for(const [bs,be] of AGE_BRACKETS_){
+    if(bs < start) continue;
+    if(bs > end) break;
+    out.push(`${bs}/${Math.min(be, end)}`);
+    if(be >= end) break;
   }
+  return out;
+}
 
-  // General case: 4-unit size spans, 6-unit steps (20/24, 26/30, 32/36 ...).
+// Splits a measurement-style range (inches, start >= 16) into 4-unit size
+// spans stepped by 6 (20/24, 26/30, 32/36 ...). When the total range is an
+// exact multiple of 6, the very first bucket is widened by 2 extra units
+// so everything still lines up cleanly on the step-6 grid all the way to
+// `end` (e.g. 18/36 → 18/24, 26/30, 32/36 instead of ending on an odd
+// leftover bucket).
+function walkMeasurement_(start, end){
   const out = [];
   let g = start;
+  if((end - start) % 6 === 0){
+    out.push(`${start}/${start+6}`);
+    g = start + 8;
+  }
   while(g <= end){
     out.push(`${g}/${Math.min(g+4, end)}`);
     g += 6;
   }
   return out;
+}
+
+// A single typed range that actually spans several standard sizes (e.g.
+// "20/36", "20-36", "20x36") gets split into the individual sizes that
+// make it up, so typing the full range once still saves each size as its
+// own separate line, same as adding them one at a time. A normal single
+// size like "20/24" (span 4 or less) is always left exactly as typed —
+// only a genuinely combined range gets split.
+function expandSizeRange_(token){
+  // "9m/16", "9m/8" — an infant-months start ("9m") through a years end,
+  // spans an infant bucket (months/24) plus the standard years brackets
+  // starting fresh from 2 years old, clipped to the given end.
+  const mm = token.match(/^(\d+)\s*m\s*[\/\-xX]\s*(\d+)$/i);
+  if(mm){
+    const months = mm[1], end = parseInt(mm[2],10);
+    return [`${months}/24`, ...walkAgeBrackets_(2, end)];
+  }
+
+  const m = token.match(/^(\d+)\s*[\/\-xX]\s*(\d+)$/);
+  if(!m) return [token];
+  const start = parseInt(m[1],10), end = parseInt(m[2],10);
+  if(!(end > start) || (end - start) <= 4) return [token];
+
+  if(start < 16){
+    // Small numbers are years (age), which only makes sense fully inside
+    // the 2–16 age-bracket table. A range like "9/24" crosses out of that
+    // table entirely and isn't a recognised combination in either system,
+    // so it's left alone rather than guessed at.
+    if(end <= 16) return walkAgeBrackets_(start, end);
+    return [token];
+  }
+
+  // start >= 16: a measurement (inches) range.
+  return walkMeasurement_(start, end);
 }
 
 function addTempSize(){
