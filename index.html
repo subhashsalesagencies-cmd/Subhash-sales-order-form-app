@@ -1506,6 +1506,14 @@ function toggleColourPrice(){
   render();
 }
 function handleOrderFormArrowNav(e, fieldId){
+  if(e.key === ' ' && fieldId === 'designNo'){
+    // Design numbers never contain spaces — typing one jumps straight to
+    // Size instead of putting a space into the Design Number box.
+    e.preventDefault();
+    const el = document.getElementById('sizeVal');
+    if(el) el.focus();
+    return;
+  }
   if(e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
   e.preventDefault();
   const idx = ORDER_FORM_FIELD_SEQUENCE.indexOf(fieldId);
@@ -1756,14 +1764,15 @@ function applyAiExtractedOrder_(data){
     }
     // A combined range read off the order form (e.g. "20/36") gets split
     // into its component sizes here too, exactly like typing it manually.
-    expandSizeRange_(size).forEach(sz => entry.sizes.push({ size: sz, qty }));
+    expandSizeRange_(size, data.brand).forEach(sz => entry.sizes.push({ size: sz, qty }));
   });
   render();
 }
 
 // The fixed, irregular age-bracket table this trade uses for kids' years
 // (2 to 16) — not a uniform step, so it's kept as an explicit list rather
-// than computed.
+// than computed. This is the DEFAULT table, used for every brand except
+// Spring Kids/Kidz (see isSpringBrand_ below).
 const AGE_BRACKETS_ = [[2,5],[6,8],[9,14],[15,16]];
 
 // Walks AGE_BRACKETS_, keeping every bracket that starts at or after
@@ -1778,6 +1787,17 @@ function walkAgeBrackets_(start, end){
     if(be >= end) break;
   }
   return out;
+}
+
+// Spring Kids / Spring Kidz / Spring always split an age range into exactly
+// TWO brackets — a fixed 4-unit first bracket, then everything else in one
+// second bracket — instead of the finer AGE_BRACKETS_ table above.
+// e.g. 2/16 -> ["2/6","8/16"]; 2/12 -> ["2/6","8/12"].
+function isSpringBrand_(brand){
+  return /spring/i.test(brand || '');
+}
+function walkSpringBrackets_(start, end){
+  return [`${start}/${start+4}`, `${start+6}/${end}`];
 }
 
 // Splits a measurement-style range (inches, start >= 16) into 4-unit size
@@ -1806,14 +1826,17 @@ function walkMeasurement_(start, end){
 // own separate line, same as adding them one at a time. A normal single
 // size like "20/24" (span 4 or less) is always left exactly as typed —
 // only a genuinely combined range gets split.
-function expandSizeRange_(token){
+function expandSizeRange_(token, brand){
+  const springBrand = isSpringBrand_(brand);
+
   // "9m/16", "9m/8" — an infant-months start ("9m") through a years end,
   // spans an infant bucket (months/24) plus the standard years brackets
   // starting fresh from 2 years old, clipped to the given end.
   const mm = token.match(/^(\d+)\s*m\s*[\/\-xX]\s*(\d+)$/i);
   if(mm){
     const months = mm[1], end = parseInt(mm[2],10);
-    return [`${months}/24`, ...walkAgeBrackets_(2, end)];
+    const ageBrackets = springBrand ? walkSpringBrackets_(2, end) : walkAgeBrackets_(2, end);
+    return [`${months}/24`, ...ageBrackets];
   }
 
   const m = token.match(/^(\d+)\s*[\/\-xX]\s*(\d+)$/);
@@ -1822,15 +1845,16 @@ function expandSizeRange_(token){
   if(!(end > start) || (end - start) <= 4) return [token];
 
   if(start < 16){
-    // Small numbers are years (age), which only makes sense fully inside
-    // the 2–16 age-bracket table. A range like "9/24" crosses out of that
+    // Small numbers are years (age). Spring Kids/Kidz always gets exactly
+    // two brackets; every other brand (or no brand at all) uses the finer
+    // AGE_BRACKETS_ table. A range like "9/24" crosses out of the 2–16
     // table entirely and isn't a recognised combination in either system,
     // so it's left alone rather than guessed at.
-    if(end <= 16) return walkAgeBrackets_(start, end);
+    if(end <= 16) return springBrand ? walkSpringBrackets_(start, end) : walkAgeBrackets_(start, end);
     return [token];
   }
 
-  // start >= 16: a measurement (inches) range.
+  // start >= 16: a measurement (inches) range — same for every brand.
   return walkMeasurement_(start, end);
 }
 
@@ -1852,8 +1876,15 @@ function addTempSize(){
   // Several sizes can be typed in one go, separated by spaces and/or commas
   // (e.g. "18/22 24/28 30/34") — each becomes its own line, all at the same
   // Set count, so a multi-size design can be added in a single tap.
-  const sizes = rawSize.split(/[\s,]+/).map(s=>s.trim()).filter(Boolean)
-    .reduce((acc,tok)=>acc.concat(expandSizeRange_(tok)), []);
+  // A single typed size is allowed to be a combined range that gets split
+  // automatically (e.g. "2/16" or "20/36"). The moment more than one size is
+  // already typed (space/comma separated), each one is taken as a literal,
+  // final size exactly as written — nothing gets auto-split further, so two
+  // real sizes entered together (e.g. "2/5 8/16") are saved exactly as those
+  // two sizes, not re-expanded.
+  const rawTokens = rawSize.split(/[\s,]+/).map(s=>s.trim()).filter(Boolean);
+  const brandNow = (document.getElementById('custBrand') && document.getElementById('custBrand').value) || '';
+  const sizes = rawTokens.length === 1 ? expandSizeRange_(rawTokens[0], brandNow) : rawTokens;
   if(!sizes.length || qty <= 0){
     msg.innerHTML = `<div class="msg err">${t('size_qty_err')}</div>`;
     return;
