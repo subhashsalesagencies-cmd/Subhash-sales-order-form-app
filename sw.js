@@ -13,11 +13,12 @@
 // data always stays live and correct when online.
 //
 // HOW TO UPDATE:
-// Whenever index.html is updated, bump CACHE_NAME below (e.g. v1 -> v2) so
-// every device picks up the new cached version instead of an old one.
+// Whenever index.html is updated, bump CACHE_NAME below (e.g. v1 -> v2) —
+// this isn't just housekeeping, it's what makes every device notice there
+// is a new version at all and go fetch it.
 // ============================================================
 
-const CACHE_NAME = 'ssa-app-v1';
+const CACHE_NAME = 'ssa-app-v2';
 const APP_SHELL = [
   './',
   './index.html',
@@ -51,6 +52,32 @@ self.addEventListener('fetch', (event) => {
   // Only handle simple page/asset loads.
   if (req.method !== 'GET') return;
 
+  // The app page itself (index.html / the app's URL) ALWAYS tries the
+  // network first. This is what makes a new deploy show up the very next
+  // time someone opens the app, instead of needing several reloads before
+  // the old cached copy finally gets replaced. Offline, it still falls
+  // back to whatever was last cached, so the app keeps working with no
+  // signal at all.
+  const isPage = req.mode === 'navigate' || (req.headers.get('accept') || '').includes('text/html');
+  if (isPage) {
+    event.respondWith(
+      fetch(req)
+        .then((res) => {
+          if (res && res.status === 200) {
+            const resClone = res.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(req, resClone));
+          }
+          return res;
+        })
+        .catch(() => caches.match(req))
+    );
+    return;
+  }
+
+  // Everything else (icons, manifest, fonts, PDF/Excel libraries) rarely
+  // changes, so these still serve instantly from cache while quietly
+  // refreshing in the background — keeps the app feeling fast and fully
+  // usable offline.
   event.respondWith(
     caches.match(req).then((cached) => {
       const networkFetch = fetch(req)
@@ -62,8 +89,6 @@ self.addEventListener('fetch', (event) => {
           return res;
         })
         .catch(() => cached);
-      // Serve from cache instantly if we have it (fast + works offline),
-      // while quietly refreshing the cache in the background when online.
       return cached || networkFetch;
     })
   );

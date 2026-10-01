@@ -1558,7 +1558,7 @@ function renderBook(main){
       </div>
       <div id="bookMsg"></div>
       <label><span class="label-dot" style="background:var(--rust);"></span>${t('design_number')}</label>
-      <input id="designNo" class="field-rust" list="designList" placeholder="${t('design_ph')}" value="${escapeHtml(tempDesignNumber)}" oninput="tempDesignNumber=this.value" onkeydown="handleOrderFormArrowNav(event,'designNo')">
+      <input id="designNo" class="field-rust" list="designList" placeholder="${t('design_ph')}" value="${escapeHtml(tempDesignNumber)}" oninput="jumpToSizeOnSpace_(this)" onkeydown="if(event.key===' '){event.preventDefault();jumpToSizeOnSpace_(this);}else{handleOrderFormArrowNav(event,'designNo')}">
 
       <label style="margin-top:10px;"><span class="label-dot" style="background:var(--mustard);"></span>${t('size')}</label>
       <div class="row">
@@ -1683,7 +1683,8 @@ async function handleAiOrderFileUpload(fileList){
   const msg = document.getElementById('bookMsg');
   if(files.length > MAX_FILES){
     if(msg) msg.innerHTML = `<div class="msg err">${t('ai_max_files')}</div>`;
-    document.getElementById('aiOrderFileInput').value = '';
+    const inp0 = document.getElementById('aiOrderFileInput');
+    if(inp0) inp0.value = '';
     return;
   }
   if(msg) msg.innerHTML = `<div class="msg">${t('ai_reading')}</div>`;
@@ -1698,7 +1699,8 @@ async function handleAiOrderFileUpload(fileList){
       // Excel sheets are read as text, photos/PDFs as images — they go to the
       // AI differently, so they can't be mixed in one upload.
       if(msg) msg.innerHTML = `<div class="msg err">${t('ai_no_mix')}</div>`;
-      document.getElementById('aiOrderFileInput').value = '';
+      const inp1 = document.getElementById('aiOrderFileInput');
+      if(inp1) inp1.value = '';
       return;
     }
 
@@ -1730,7 +1732,8 @@ async function handleAiOrderFileUpload(fileList){
     const result = await res.json();
     if(!result.success){
       if(msg) msg.innerHTML = `<div class="msg err">${t('ai_read_failed')}${result.error ? ': '+escapeHtml(result.error) : ''}</div>`;
-      document.getElementById('aiOrderFileInput').value = '';
+      const inp2 = document.getElementById('aiOrderFileInput');
+      if(inp2) inp2.value = '';
       return;
     }
     applyAiExtractedOrder_(result.data);
@@ -1740,7 +1743,9 @@ async function handleAiOrderFileUpload(fileList){
     if(msg2) msg2.innerHTML = `<div class="msg ok">${t('ai_read_done')}</div>`;
   }catch(e){
     console.error('AI order read failed', e);
-    if(msg) msg.innerHTML = `<div class="msg err">${t('ai_read_failed')}</div>`;
+    const detail = e && e.message ? e.message : String(e);
+    const msgNow = document.getElementById('bookMsg');
+    if(msgNow) msgNow.innerHTML = `<div class="msg err">${t('ai_read_failed')}: ${escapeHtml(detail)}</div>`;
   }
   const inp = document.getElementById('aiOrderFileInput');
   if(inp) inp.value = '';
@@ -1856,6 +1861,21 @@ function expandSizeRange_(token, brand){
 
   // start >= 16: a measurement (inches) range — same for every brand.
   return walkMeasurement_(start, end);
+}
+
+// Typing a space right after the Design Number jumps straight to Size —
+// done via BOTH the keydown handler (clean, instant on a physical
+// keyboard) and this input-based check (mobile on-screen keyboards often
+// don't fire a usable keydown for spacebar, but 'input' always fires).
+function jumpToSizeOnSpace_(el){
+  if(el.value.endsWith(' ')){
+    tempDesignNumber = el.value.trim();
+    el.value = tempDesignNumber;
+    const sizeEl = document.getElementById('sizeVal');
+    if(sizeEl){ sizeEl.focus(); sizeEl.select(); }
+  } else {
+    tempDesignNumber = el.value;
+  }
 }
 
 function addTempSize(){
@@ -3199,6 +3219,17 @@ loadData();
 if('serviceWorker' in navigator){
   window.addEventListener('load', ()=>{
     navigator.serviceWorker.register('sw.js').catch(e=>console.error('Service worker registration failed', e));
+  });
+  // The moment a newly-deployed service worker takes over (because sw.js
+  // was updated and its CACHE_NAME changed), reload once automatically so
+  // the page actually shows the new version straight away — instead of
+  // everyone needing to refresh three or four times by hand before the new
+  // copy finally wins.
+  let swRefreshed_ = false;
+  navigator.serviceWorker.addEventListener('controllerchange', ()=>{
+    if(swRefreshed_) return;
+    swRefreshed_ = true;
+    window.location.reload();
   });
 }
 </script>
