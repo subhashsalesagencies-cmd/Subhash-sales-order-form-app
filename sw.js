@@ -18,7 +18,39 @@
 // is a new version at all and go fetch it.
 // ============================================================
 
-const CACHE_NAME = 'ssa-app-v2';
+// ------------------------------------------------------------
+// BACKGROUND PUSH (new-order alerts even when the app is closed)
+// Fill the SAME Firebase values here as in index.html (FIREBASE_CONFIG).
+// Wrapped in try/catch so, if anything here fails, the offline app itself
+// keeps working exactly as before.
+// ------------------------------------------------------------
+try {
+  importScripts(
+    'https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js',
+    'https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js'
+  );
+  firebase.initializeApp({
+    apiKey: 'PASTE_API_KEY',
+    authDomain: 'PASTE_PROJECT_ID.firebaseapp.com',
+    projectId: 'PASTE_PROJECT_ID',
+    messagingSenderId: 'PASTE_SENDER_ID',
+    appId: 'PASTE_APP_ID'
+  });
+  const messaging = firebase.messaging();
+  messaging.onBackgroundMessage((payload) => {
+    const d = (payload && payload.data) || {};
+    return self.registration.showNotification(d.title || 'New Order', {
+      body: d.body || '',
+      icon: 'icon-192.png',
+      badge: 'icon-192.png',
+      tag: d.tag || undefined
+    });
+  });
+} catch (e) {
+  console.error('Push setup skipped in service worker', e);
+}
+
+const CACHE_NAME = 'ssa-app-v4';
 const APP_SHELL = [
   './',
   './index.html',
@@ -90,6 +122,20 @@ self.addEventListener('fetch', (event) => {
         })
         .catch(() => cached);
       return cached || networkFetch;
+    })
+  );
+});
+
+// Tapping a "New Order" notification brings the app to the front
+// (or opens it if it was closed).
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+      for (const c of list) {
+        if ('focus' in c) return c.focus();
+      }
+      if (self.clients.openWindow) return self.clients.openWindow('./');
     })
   );
 });

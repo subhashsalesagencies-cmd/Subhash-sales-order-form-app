@@ -377,6 +377,10 @@
   }
   .lang-toggle:active{ background:rgba(255,255,255,.3); }
 
+  .ssa-toast-wrap{ position:fixed; top:12px; left:0; right:0; z-index:9999; display:flex; flex-direction:column; align-items:center; gap:8px; pointer-events:none; }
+  .ssa-toast{ pointer-events:auto; max-width:92%; background:#1656A6; color:#fff; padding:12px 16px; border-radius:12px; font-size:14px; font-weight:600; box-shadow:0 6px 20px rgba(0,0,0,.3); border-left:6px solid #FFC94D; }
+  .item-line .st-pend{ color:var(--rust); font-weight:700; }
+  .item-line .st-done{ color:#245C3B; font-weight:700; }
   .trash-actions{ display:flex; gap:8px; }
   .perm-del-btn{
     background:#fff; color:var(--rust); border:1.5px solid var(--rust);
@@ -389,6 +393,7 @@
 <div class="topbar">
   <h1>Subhash Sales Agencies</h1>
   <div class="topbar-right">
+    <button class="lang-toggle" id="notifyToggleBtn" onclick="toggleNotify()" title="Order notifications">🔔</button>
     <button class="lang-toggle" id="langToggleBtn" onclick="toggleLang()">हिं</button>
     <span id="topbarRight"></span>
   </div>
@@ -606,6 +611,9 @@ const I18N = {
     whatsapp:'WhatsApp', print:'Print', delete_btn:'Delete', undo:'Undo',
     from_date:'From Date', to_date:'To Date', brand_overview:'Brand Overview', articles_word:'articles',
     no_brand_orders:'No orders found for this brand.',
+    no_pending_brand:'No pending sets for this brand.', dup_design_alert:'This design already created to this customer',
+    dup_in_cart:'This design + colour is already added in this order list.', dup_prev_order:'Earlier order', notif_on_msg:'🔔 New-order notifications ON', notif_off_msg:'🔕 New-order notifications OFF',
+    new_order_title:'New Order', notif_blocked:'Browser notifications are blocked. Please allow notifications for this app in your browser/phone settings. In-app alerts will still show while the app is open.',
 
     search_customer:'Search Customer', type_name:'Type name', search_by_brand:'Search by Brand',
     type_brand_name:'Type brand name', no_customer_found:'No customer found', no_order_yet:'No order recorded yet',
@@ -689,6 +697,9 @@ const I18N = {
     whatsapp:'व्हाट्सएप', print:'प्रिंट', delete_btn:'डिलीट', undo:'वापस करें',
     from_date:'शुरू तारीख', to_date:'आखिरी तारीख', brand_overview:'ब्रांड की पूरी सूची', articles_word:'आर्टिकल',
     no_brand_orders:'इस ब्रांड का कोई ऑर्डर नहीं मिला।',
+    no_pending_brand:'इस ब्रांड का कोई पेंडिंग सेट नहीं है।', dup_design_alert:'यह डिज़ाइन इस कस्टमर को पहले ही बनाया जा चुका है (This design already created to this customer)',
+    dup_in_cart:'यह डिज़ाइन + कलर इस ऑर्डर की लिस्ट में पहले से जुड़ा है।', dup_prev_order:'पिछला ऑर्डर', notif_on_msg:'🔔 नए ऑर्डर की सूचना चालू', notif_off_msg:'🔕 नए ऑर्डर की सूचना बंद',
+    new_order_title:'नया ऑर्डर', notif_blocked:'ब्राउज़र की नोटिफिकेशन बंद है। कृपया फ़ोन/ब्राउज़र सेटिंग में इस ऐप की नोटिफिकेशन चालू करें। ऐप खुला होने पर ऐप के अंदर अलर्ट दिखेगा।',
 
     search_customer:'ग्राहक खोजें', type_name:'नाम लिखें', search_by_brand:'ब्रांड से खोजें',
     type_brand_name:'ब्रांड का नाम लिखें', no_customer_found:'कोई ग्राहक नहीं मिला', no_order_yet:'अभी तक कोई ऑर्डर दर्ज नहीं हुआ',
@@ -776,7 +787,7 @@ function pdfWithPrice_(columns, tableRows, srcRows, afterCol){
   return { columns: cols, tableRows: rows };
 }
 
-function buildPdfBlob(title, subtitle, columns, rows, footerText){
+function buildPdfBlob(title, subtitle, columns, rows, footerText, extraOpts){
   if(!window.jspdf || !window.jspdf.jsPDF) return null;
   try{
     const { jsPDF } = window.jspdf;
@@ -801,14 +812,14 @@ function buildPdfBlob(title, subtitle, columns, rows, footerText){
     doc.setTextColor(90,100,115);
     doc.text(subtitle, 14, 43);
     doc.setTextColor(20,20,20);
-    doc.autoTable({
+    doc.autoTable(Object.assign({
       startY: 48,
       head: [columns],
       body: rows,
       styles: { fontSize: 9, cellPadding: 3 },
       headStyles: { fillColor: [22,86,166], textColor: [255,255,255] },
       theme: 'grid'
-    });
+    }, extraOpts || {}));
     if(footerText){
       const finalY = (doc.lastAutoTable && doc.lastAutoTable.finalY) || 48;
       doc.setFontSize(11);
@@ -1013,6 +1024,7 @@ async function loadData(){
     bookings = v ? JSON.parse(v) : [];
     normalizeBookingFields_(bookings);
   }catch(e){ bookings = []; }
+  seenBookingIds_ = new Set(bookings.map(b=>b.id)); // baseline: existing orders never trigger a notification
   try{
     const v2 = await storageGet('activityLog');
     activityLog = v2 ? JSON.parse(v2) : [];
@@ -1081,6 +1093,7 @@ async function silentRefresh_(){
     const v = await storageGet('bookings');
     const newBookings = v ? JSON.parse(v) : [];
     normalizeBookingFields_(newBookings);
+    detectNewOrders_(newBookings);
     bookings = newBookings;
     const v2 = await storageGet('activityLog');
     activityLog = v2 ? JSON.parse(v2) : [];
@@ -1188,6 +1201,180 @@ document.getElementById('bottomNav').addEventListener('click', (e)=>{
   if(navigator.onLine) silentRefresh_();
 });
 
+
+/* ---------------- NEW-ORDER NOTIFICATIONS ----------------
+   Whenever ANOTHER staff member creates an order, this device shows an alert
+   (in-app banner + phone/browser notification if allowed). Only order
+   creation triggers it. The bell button in the top bar turns it on/off
+   (saved per device). */
+let notifyOrders = true;
+try{ notifyOrders = localStorage.getItem('ssa_notify_orders') !== '0'; }catch(e){}
+let seenBookingIds_ = null;
+
+function updateNotifyBtn_(){
+  const b = document.getElementById('notifyToggleBtn');
+  if(!b) return;
+  b.textContent = notifyOrders ? '🔔' : '🔕';
+  b.title = notifyOrders ? 'New-order notifications: ON' : 'New-order notifications: OFF';
+  b.style.opacity = notifyOrders ? '1' : '0.6';
+}
+async function toggleNotify(){
+  notifyOrders = !notifyOrders;
+  try{ localStorage.setItem('ssa_notify_orders', notifyOrders ? '1' : '0'); }catch(e){}
+  updateNotifyBtn_();
+  if(notifyOrders && 'Notification' in window && Notification.permission === 'default'){
+    try{ await Notification.requestPermission(); }catch(e){}
+  }
+  if(notifyOrders && 'Notification' in window && Notification.permission === 'denied'){
+    alert(t('notif_blocked'));
+  }
+  if(notifyOrders) registerPush_(); else unregisterPush_();
+  showInAppToast_(notifyOrders ? t('notif_on_msg') : t('notif_off_msg'));
+}
+// Ask for notification permission once, on the first tap anywhere (browsers
+// only allow the permission prompt right after a user tap).
+document.addEventListener('click', function askNotifPermOnce_(){
+  document.removeEventListener('click', askNotifPermOnce_);
+  if(notifyOrders && 'Notification' in window && Notification.permission === 'default'){
+    try{ Promise.resolve(Notification.requestPermission()).then(()=>registerPush_()); }catch(e){}
+  }
+}, { once:true });
+
+function showInAppToast_(text){
+  let wrap = document.getElementById('ssaToastWrap');
+  if(!wrap){
+    wrap = document.createElement('div');
+    wrap.id = 'ssaToastWrap';
+    wrap.className = 'ssa-toast-wrap';
+    document.body.appendChild(wrap);
+  }
+  const el = document.createElement('div');
+  el.className = 'ssa-toast';
+  el.textContent = text;
+  el.onclick = ()=> el.remove();
+  wrap.appendChild(el);
+  setTimeout(()=>{ if(el.parentNode) el.remove(); }, 8000);
+}
+
+function showOrderNotification_(title, body, tag){
+  showInAppToast_(title + ' — ' + body);
+  try{ if(navigator.vibrate) navigator.vibrate([200,100,200]); }catch(e){}
+  try{
+    if('Notification' in window && Notification.permission === 'granted'){
+      const opts = { body: body, icon: 'icon-192.png', badge: 'icon-192.png', tag: tag || ('ssa-order-' + Date.now()) };
+      if(navigator.serviceWorker && navigator.serviceWorker.ready){
+        navigator.serviceWorker.ready
+          .then(reg=>reg.showNotification(title, opts))
+          .catch(()=>{ try{ new Notification(title, opts); }catch(e){} });
+      } else { new Notification(title, opts); }
+    }
+  }catch(e){ console.error('Notification failed', e); }
+}
+
+function detectNewOrders_(list){
+  if(!seenBookingIds_){ seenBookingIds_ = new Set(list.map(b=>b.id)); return; }
+  const fresh = list.filter(b=>!seenBookingIds_.has(b.id));
+  list.forEach(b=>seenBookingIds_.add(b.id));
+  if(!fresh.length || !notifyOrders || !currentStaff) return;
+  const groups = {};
+  fresh.forEach(b=>{
+    const ob = b.orderedBy;
+    const mine = ob && ob.name === currentStaff.name && (ob.mobile||'') === (currentStaff.mobile||'');
+    if(mine) return;                                                   // own orders: no alert
+    if(b.status !== 'pending' || b.trashed) return;
+    if(Date.now() - new Date(b.orderedAt).getTime() > 6*60*60*1000) return; // ignore old orders arriving late
+    const key = b.customerName + '|' + b.orderedAt;
+    if(!groups[key]) groups[key] = { key:key, customer:b.customerName, brand:b.brand, by:(ob && ob.name) || '', sets:0 };
+    groups[key].sets += b.qty;
+  });
+  Object.values(groups).forEach(g=>{
+    showOrderNotification_(t('new_order_title'), `${g.customer}${g.brand ? ' ('+g.brand+')' : ''} · ${g.sets} ${t('sets')}${g.by ? ' · ' + g.by : ''}`, 'ssa-' + g.key);
+  });
+}
+
+
+/* ---------------- BACKGROUND PUSH (works even when the app is CLOSED) ----------------
+   Uses Firebase Cloud Messaging. After an order is saved, this device asks the
+   Google Apps Script to push "New Order" to every OTHER registered device.
+   Needs the one-time setup: fill FIREBASE_CONFIG + FCM_VAPID_KEY below (and the
+   same FIREBASE_CONFIG in sw.js) and add the Apps Script push code.
+   Until filled in, this part stays silent and the normal in-app alerts keep working. */
+const FIREBASE_CONFIG = {
+  apiKey: 'PASTE_API_KEY',
+  authDomain: 'PASTE_PROJECT_ID.firebaseapp.com',
+  projectId: 'PASTE_PROJECT_ID',
+  messagingSenderId: 'PASTE_SENDER_ID',
+  appId: 'PASTE_APP_ID'
+};
+const FCM_VAPID_KEY = 'PASTE_VAPID_PUBLIC_KEY';
+const pushConfigured = !String(FIREBASE_CONFIG.apiKey).startsWith('PASTE') && !String(FCM_VAPID_KEY).startsWith('PASTE');
+
+let myPushToken_ = null;
+try{ myPushToken_ = localStorage.getItem('ssa_push_token') || null; }catch(e){}
+let pushTried_ = false;
+let fbSdkPromise_ = null;
+
+function loadScriptOnce_(url){
+  return new Promise((resolve, reject)=>{
+    const s = document.createElement('script');
+    s.src = url; s.onload = resolve; s.onerror = ()=>reject(new Error('load failed '+url));
+    document.head.appendChild(s);
+  });
+}
+function loadFirebaseSdk_(){
+  if(window.firebase && firebase.messaging) return Promise.resolve();
+  if(!fbSdkPromise_){
+    fbSdkPromise_ = loadScriptOnce_('https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js')
+      .then(()=>loadScriptOnce_('https://www.gstatic.com/firebasejs/10.12.2/firebase-messaging-compat.js'))
+      .catch(e=>{ fbSdkPromise_ = null; throw e; });
+  }
+  return fbSdkPromise_;
+}
+function postToSheet_(obj){
+  return fetch(SHEET_SCRIPT_URL, { method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body: JSON.stringify(obj) });
+}
+
+async function registerPush_(){
+  if(!pushConfigured || !cloudAvailable || !notifyOrders || !currentStaff || !navigator.onLine) return;
+  if(!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) return;
+  if(Notification.permission !== 'granted') return;
+  try{
+    await loadFirebaseSdk_();
+    if(!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+    const messaging = firebase.messaging();
+    const reg = await navigator.serviceWorker.ready;
+    const token = await messaging.getToken({ vapidKey: FCM_VAPID_KEY, serviceWorkerRegistration: reg });
+    if(!token) return;
+    myPushToken_ = token;
+    try{ localStorage.setItem('ssa_push_token', token); }catch(e){}
+    await postToSheet_({ action:'registerPush', token: token, name: currentStaff.name });
+  }catch(e){ console.error('Push registration failed', e); }
+}
+
+async function unregisterPush_(){
+  const token = myPushToken_;
+  if(!token) return;
+  try{ if(cloudAvailable && navigator.onLine) await postToSheet_({ action:'unregisterPush', token: token }); }catch(e){}
+  try{ if(window.firebase && firebase.apps.length) await firebase.messaging().deleteToken(); }catch(e){}
+  myPushToken_ = null;
+  try{ localStorage.removeItem('ssa_push_token'); }catch(e){}
+}
+
+// Called right after an order is saved: the Apps Script pushes it to every
+// other registered device (this device's own token is skipped).
+function sendOrderPush_(cust, brand, sets, orderedAt){
+  if(!pushConfigured || !cloudAvailable || !navigator.onLine) return;
+  try{
+    postToSheet_({
+      action: 'sendOrderPush',
+      senderToken: myPushToken_ || '',
+      title: 'New Order',
+      body: `${cust}${brand ? ' ('+brand+')' : ''} · ${sets} Sets${currentStaff ? ' · ' + currentStaff.name : ''}`,
+      tag: 'ssa-' + cust + '|' + orderedAt
+    }).catch(()=>{});
+  }catch(e){}
+}
+
 function renderTopbarRight(){
   const el = document.getElementById('topbarRight');
   if(!currentStaff){ el.innerHTML = ''; return; }
@@ -1239,6 +1426,7 @@ function render(){
 
   renderTopbarRight();
   updateDatalists();
+  if(!pushTried_){ pushTried_ = true; registerPush_(); }
   console.log('[render] currentTab =', currentTab);
   if(currentTab==='book') renderBook(main);
   else if(currentTab==='dispatch') renderDispatch(main);
@@ -1373,6 +1561,8 @@ function loginStaffManual(){
 }
 
 function logoutStaff(){
+  unregisterPush_();   // this device stops getting order alerts once logged out
+  pushTried_ = false;
   currentStaff = null;
   loginWaitingEmail = null;
   try{ localStorage.removeItem('ssa_currentStaff'); }catch(e){}
@@ -1878,6 +2068,34 @@ function jumpToSizeOnSpace_(el){
   }
 }
 
+
+/* ---------------- DUPLICATE DESIGN CHECK ----------------
+   Same customer + same brand + same design number + same colour must never be
+   created twice. (Both colours blank also counts as the same.) A different
+   colour, or a different brand, is allowed. */
+function findSavedDuplicate_(cust, brand, design, colour){
+  const c = normKey_(cust), br = normKey_(brand), d = normKey_(design), col = normKey_(colour);
+  if(!c || !br || !d) return null;
+  return bookings.find(b=>!b.trashed &&
+    normKey_(b.customerName)===c && normKey_(b.brand)===br &&
+    normKey_(b.designNumber)===d && normKey_(b.colour)===col) || null;
+}
+function findCartDuplicate_(design, colour){
+  const d = normKey_(design), col = normKey_(colour);
+  return draftCart.find(x=>normKey_(x.designNumber)===d && normKey_(x.colour)===col) || null;
+}
+function showDuplicateAlert_(design, colour, savedBooking){
+  let text = `⚠️ ${t('dup_design_alert')}\n\n${design}${colour ? ' · ' + colour : ''}`;
+  if(savedBooking){
+    text += `\n${t('dup_prev_order')}: ${dispatchDateLabel(dispatchDateKey(savedBooking.orderedAt))} (${savedBooking.status==='dispatched' ? t('dispatched') : t('badge_pending')})`;
+  } else {
+    text += `\n${t('dup_in_cart')}`;
+  }
+  const msg = document.getElementById('bookMsg');
+  if(msg) msg.innerHTML = `<div class="msg err" style="font-weight:700;">${escapeHtml(text).replace(/\n/g,'<br>')}</div>`;
+  alert(text);
+}
+
 function addTempSize(){
   const sizeInput = document.getElementById('sizeVal');
   const qtyInput = document.getElementById('qtyVal');
@@ -1909,9 +2127,12 @@ function addTempSize(){
     msg.innerHTML = `<div class="msg err">${t('size_qty_err')}</div>`;
     return;
   }
-  // Goes straight into the order — no separate "Add this design" step. If
-  // this same design+colour is already in the cart, the new size(s) just
-  // join it; otherwise a new design block is started.
+  // Block a repeat of the same design + colour (same brand, same customer):
+  // either already in this order list, or already ordered earlier.
+  const custNow = (document.getElementById('custName') && document.getElementById('custName').value) || draftCustomer || '';
+  if(findCartDuplicate_(designNo, colour)){ showDuplicateAlert_(designNo, colour, null); return; }
+  const savedDup = findSavedDuplicate_(custNow, brandNow, designNo, colour);
+  if(savedDup){ showDuplicateAlert_(designNo, colour, savedDup); return; }
   let entry = draftCart.find(d=>d.designNumber===designNo && (d.colour||'')===colour);
   if(!entry){
     entry = { designNumber: designNo, colour: colour, sizes: [] };
@@ -1953,6 +2174,13 @@ async function saveOrder(){
   if(!custBrand){ msg.innerHTML = `<div class="msg err">${t('enter_brand_err')}</div>`; return; }
   if(!draftCart.length){ return; }
 
+  // Final safety check (also covers designs filled in by the AI upload):
+  // no design + colour may repeat for this customer + brand.
+  for(const d of draftCart){
+    const dup = findSavedDuplicate_(custName, custBrand, d.designNumber, d.colour);
+    if(dup){ showDuplicateAlert_(d.designNumber, d.colour, dup); return; }
+  }
+
   isSavingOrder = true;
   const saveBtn = document.getElementById('saveOrderBtn');
   if(saveBtn){ saveBtn.disabled = true; saveBtn.textContent = t('saving_word'); }
@@ -1992,6 +2220,7 @@ async function saveOrder(){
 
     const count = draftCart.length;
     await logActivity('Order Booked', `${custName}${custBrand ? ' ('+custBrand+')' : ''} — ${count} design(s), ${totalSets} sets`);
+    sendOrderPush_(custName, custBrand, totalSets, now);
 
     draftCart = [];
     draftCustomer = '';
@@ -2038,6 +2267,52 @@ function inDispatchDateRange(iso){
   if(dispatchFromDate && key < dispatchFromDate) return false;
   if(dispatchToDate && key > dispatchToDate) return false;
   return true;
+}
+
+
+/* ---------------- BRAND OVERVIEW HELPERS ---------------- */
+function normKey_(s){ return String(s==null ? '' : s).trim().replace(/\s+/g,' ').toLowerCase(); }
+function natCmp_(a,b){ return String(a==null?'':a).localeCompare(String(b==null?'':b), undefined, {numeric:true, sensitivity:'base'}); }
+
+// Active (not deleted) orders of the brand typed in the Article tab, inside the date range.
+function getBrandMatches_(){
+  const bql = dispatchBrandQuery.trim().toLowerCase();
+  if(!bql) return [];
+  return bookings.filter(b=>!b.trashed && (b.brand||'').toLowerCase().includes(bql) && inDispatchDateRange(b.orderedAt));
+}
+
+// Groups orders as Article > Colour > Size. Colour and size are compared
+// ignoring upper/lower case and extra spaces, so "Red", "RED " and "red" from
+// different customers all land in ONE combined line instead of repeating.
+function buildBrandGroups_(matches){
+  const dmap = {};
+  matches.forEach(b=>{
+    const dk = normKey_(b.designNumber);
+    const d = dmap[dk] || (dmap[dk] = { design: String(b.designNumber).trim(), colours: {} });
+    const ck = normKey_(b.colour);
+    const c = d.colours[ck] || (d.colours[ck] = { colour: String(b.colour||'').trim().toUpperCase(), sizes: {} });
+    const sk = normKey_(b.size);
+    const s = c.sizes[sk] || (c.sizes[sk] = { size: String(b.size||'-').trim(), pending: 0, dispatched: 0, lines: [] });
+    s[b.status==='dispatched' ? 'dispatched' : 'pending'] += b.qty;
+    s.lines.push(b);
+  });
+  return Object.values(dmap)
+    .sort((a,b)=> natCmp_(a.design,b.design))
+    .map(d=>({
+      design: d.design,
+      colours: Object.values(d.colours)
+        .sort((a,b)=> natCmp_(a.colour,b.colour))
+        .map(c=>({ colour: c.colour, sizes: Object.values(c.sizes).sort((a,b)=> natCmp_(a.size,b.size)) }))
+    }));
+}
+
+// Keeps only sets still waiting to be dispatched; drops sizes/colours/articles
+// that have nothing pending left.
+function pendingOnlyGroups_(groups){
+  return groups.map(g=>({
+    design: g.design,
+    colours: g.colours.map(c=>({ colour: c.colour, sizes: c.sizes.filter(s=>s.pending > 0) })).filter(c=>c.sizes.length)
+  })).filter(g=>g.colours.length);
 }
 
 function renderDispatch(main){
@@ -2186,78 +2461,60 @@ function renderDispatch(main){
       ${trashedCardsHtml}
     `;
   } else if(!hasArticleQuery && hasBrandQuery){
-    // Article number left blank, only a brand typed — show every article
-    // ordered under that brand, grouped by article then colour, each line
-    // naming the customer and size, plus a Print (PDF) option for the list.
-    const bq = dispatchBrandQuery.trim().toLowerCase();
-    const brandMatches = activeBookings.filter(b=>(b.brand||'').toLowerCase().includes(bq) && inDispatchDateRange(b.orderedAt));
+    // Brand overview. "Size-wise Total" shows ONLY what is still pending
+    // (dispatched sets are already subtracted), with same colour / same size
+    // from different customers merged into one combined total.
+    // "Customer-wise Detail" shows who it belongs to and whether it is
+    // dispatched or still pending.
+    const brandMatches = getBrandMatches_();
+    const allGroups = buildBrandGroups_(brandMatches);
+    const isDetail = dispatchBrandView === 'detail';
+    const groups = isDetail ? allGroups : pendingOnlyGroups_(allGroups);
 
     if(!brandMatches.length){
       resultsHtml = `<div class="empty">${t('no_brand_orders')}</div>`;
+    } else if(!groups.length){
+      resultsHtml = `<div class="empty">${t('no_pending_brand')}</div>`;
     } else {
-      const designGroups = {};
-      brandMatches.forEach(b=>{
-        if(!designGroups[b.designNumber]) designGroups[b.designNumber] = [];
-        designGroups[b.designNumber].push(b);
-      });
-      const designKeys = Object.keys(designGroups).sort((a,b)=>a.localeCompare(b));
-      const totalSets = brandMatches.reduce((s,b)=>s+b.qty,0);
+      let totPend = 0, totDone = 0;
+      const articleCards = groups.map(g=>{
+        let gPend = 0, gDone = 0;
+        g.colours.forEach(c=>c.sizes.forEach(s=>{ gPend += s.pending; gDone += s.dispatched; }));
+        totPend += gPend; totDone += gDone;
+        const showColourLabels = g.colours.length > 1 || (g.colours.length===1 && g.colours[0].colour !== '');
 
-      const articleCards = designKeys.map(dn=>{
-        const rows = designGroups[dn];
-        const dnTotal = rows.reduce((s,b)=>s+b.qty,0);
-        const colourGroups = {};
-        rows.forEach(b=>{
-          const key = b.colour || '';
-          if(!colourGroups[key]) colourGroups[key] = [];
-          colourGroups[key].push(b);
-        });
-        const colourKeys = Object.keys(colourGroups);
-        const showColourLabels = colourKeys.length > 1 || (colourKeys.length===1 && colourKeys[0] !== '');
-
-        const colourSections = colourKeys.map(colour=>{
-          if(dispatchBrandView === 'detail'){
-            // Per-customer detail, as it was before — each customer's own line.
-            const lines = colourGroups[colour].map(b=>{
+        const colourSections = g.colours.map(c=>{
+          let lines = '';
+          if(isDetail){
+            const flat = [];
+            c.sizes.forEach(s=> s.lines.forEach(b=> flat.push(b)));
+            flat.sort((a,b)=> natCmp_(a.size,b.size) || (a.status===b.status?0:(a.status==='pending'?-1:1)) || String(a.customerName).localeCompare(String(b.customerName)));
+            lines = flat.map(b=>{
               const done = b.status==='dispatched';
-              return `<div class="item-line"><span>${escapeHtml(b.customerName)} · ${escapeHtml(b.size)}</span><span>${b.qty} ${t('set')} ${done?'✓':''}</span></div>`;
+              return `<div class="item-line"><span>${escapeHtml(b.customerName)} · ${escapeHtml(b.size)}</span><span>${b.qty} ${t('set')} · <span class="${done?'st-done':'st-pend'}">${done ? t('dispatched')+' ✓' : t('badge_pending')}</span></span></div>`;
             }).join('');
-            const label = showColourLabels ? `<div class="colour-label">${escapeHtml(colour || t('no_colour'))}</div>` : '';
-            return `${label}${lines}`;
+          } else {
+            lines = c.sizes.map(s=>`<div class="item-line"><span>${escapeHtml(s.size)}</span><span>${s.pending} ${t('set')}</span></div>`).join('');
           }
-          // Size-wise total: sum every customer's qty for this article+colour+size
-          // together, instead of listing each customer's line separately, so
-          // staff can see at a glance how many sets of each size are on order.
-          const sizeTotals = {};
-          const sizeStatus = {};
-          colourGroups[colour].forEach(b=>{
-            const sz = b.size || '-';
-            sizeTotals[sz] = (sizeTotals[sz] || 0) + b.qty;
-            if(!sizeStatus[sz]) sizeStatus[sz] = { pending:0, dispatched:0 };
-            sizeStatus[sz][b.status==='dispatched' ? 'dispatched' : 'pending'] += b.qty;
-          });
-          const sizeKeys = Object.keys(sizeTotals).sort((a,b)=>a.localeCompare(b));
-          const lines = sizeKeys.map(sz=>{
-            const st = sizeStatus[sz];
-            let statusNote = '';
-            if(st.dispatched && st.pending) statusNote = ` (${st.dispatched} ${t('dispatched')}, ${st.pending} ${t('badge_pending')})`;
-            else if(st.dispatched) statusNote = ` (${t('dispatched')} ✓)`;
-            return `<div class="item-line"><span>${escapeHtml(sz)}</span><span>${sizeTotals[sz]} ${t('set')}${statusNote}</span></div>`;
-          }).join('');
-          const label = showColourLabels ? `<div class="colour-label">${escapeHtml(colour || t('no_colour'))}</div>` : '';
+          const label = showColourLabels ? `<div class="colour-label">${escapeHtml(c.colour || t('no_colour'))}</div>` : '';
           return `${label}${lines}`;
         }).join('');
 
+        const pills = `<span class="set-pill pending">${gPend} ${t('sets')}</span>` + (isDetail && gDone ? ` <span class="set-pill done">${t('dispatched')}: ${gDone}</span>` : '');
         return `<div class="cust-card">
-          <div class="cust-head"><span class="name">${t('article')}: ${escapeHtml(dn)}</span><span class="set-pill pending">${dnTotal} ${t('sets')}</span></div>
+          <div class="cust-head"><span class="name">${t('article')}: ${escapeHtml(g.design)}</span><span>${pills}</span></div>
           ${colourSections}
         </div>`;
       }).join('');
 
+      const countLine = isDetail
+        ? `${groups.length} ${t('articles_word')} · ${t('badge_pending')}: ${totPend} · ${t('dispatched')}: ${totDone}`
+        : `${groups.length} ${t('articles_word')} · ${totPend} ${t('sets')} (${t('badge_pending')})`;
+
       resultsHtml = `
         <div class="card">
           <div class="section-label" style="margin-top:0;">${t('brand_overview')}: ${escapeHtml(dispatchBrandQuery.trim())}</div>
-          <div style="font-size:13px;color:#5b6472;margin-bottom:10px;">${designKeys.length} ${t('articles_word')} · ${totalSets} ${t('sets')}</div>
+          <div style="font-size:13px;color:#5b6472;margin-bottom:10px;">${countLine}</div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
             <button class="secondary" style="${dispatchBrandView==='summary'?'background:var(--navy);color:#fff;':''}" onclick="setDispatchBrandView('summary')">Size-wise Total</button>
             <button class="secondary" style="${dispatchBrandView==='detail'?'background:var(--navy);color:#fff;':''}" onclick="setDispatchBrandView('detail')">Customer-wise Detail</button>
@@ -2312,54 +2569,84 @@ function onDispatchDateRange(which, val){
 function printBrandOverview(){
   const bq = dispatchBrandQuery.trim();
   if(!bq) return;
-  const bql = bq.toLowerCase();
-  const matches = bookings.filter(b=>!b.trashed && (b.brand||'').toLowerCase().includes(bql) && inDispatchDateRange(b.orderedAt))
-    .sort((a,b)=> a.designNumber.localeCompare(b.designNumber) || (a.colour||'').localeCompare(b.colour||'') || a.customerName.localeCompare(b.customerName));
+  const matches = getBrandMatches_();
   if(!matches.length){ alert(t('no_brand_orders')); return; }
-  const totalSets = matches.reduce((s,b)=>s+b.qty,0);
-  const rows = matches.map(b=>[b.designNumber, b.colour||'-', b.customerName, b.size, String(b.qty), b.status==='dispatched'?t('dispatched'):t('badge_pending')]);
-  const pp = pdfWithPrice_(['Article','Colour','Customer','Size','Set','Status'], rows, matches, 'Set');
+  // The printed list is always the set-wise PENDING list (what still has to be
+  // ordered/arranged) — never customer-wise, regardless of the on-screen view.
+  const groups = pendingOnlyGroups_(buildBrandGroups_(matches));
+  if(!groups.length){ alert(t('no_pending_brand')); return; }
+
+  const rows = [];
+  let total = 0;
+  groups.forEach(g=>{
+    let gTotal = 0;
+    g.colours.forEach(c=>c.sizes.forEach(s=>{ gTotal += s.pending; }));
+    total += gTotal;
+    rows.push([{ content: `Article: ${g.design}      (${gTotal} Set)`, colSpan: 3,
+      styles: { fillColor:[222,234,250], textColor:[22,86,166], fontStyle:'bold', fontSize:12 } }]);
+    g.colours.forEach(c=>{
+      c.sizes.forEach(s=>{
+        rows.push([ c.colour || '-', s.size, { content: String(s.pending), styles:{ fontStyle:'bold', halign:'center' } } ]);
+      });
+    });
+  });
+
   let dateNote = '';
   if(dispatchFromDate || dispatchToDate){
-    dateNote = ` (${dispatchFromDate ? dispatchDateLabel(dispatchFromDate) : '…'} – ${dispatchToDate ? dispatchDateLabel(dispatchToDate) : '…'})`;
+    dateNote = ` | ${dispatchFromDate ? dispatchDateLabel(dispatchFromDate) : '...'} - ${dispatchToDate ? dispatchDateLabel(dispatchToDate) : '...'}`;
   }
-  const blob = buildPdfBlob(`${t('brand_overview')}: ${bq}${dateNote}`, `Subhash Sales Agencies · ${new Date().toLocaleDateString('en-IN')}`, pp.columns, pp.tableRows, `${t('total')}: ${totalSets} ${t('sets')}`);
+  const blob = buildPdfBlob(
+    `Pending Sets to Order - ${bq}`,
+    `Subhash Sales Agencies | ${new Date().toLocaleDateString('en-IN')}${dateNote}`,
+    ['Colour','Size','Pending Set'],
+    rows,
+    `Total Pending: ${total} Set`,
+    { styles:{ fontSize:11, cellPadding:3.2 }, columnStyles:{ 2:{ halign:'center', cellWidth:35 } } }
+  );
   if(!blob){ alert(t('pdf_gen_fail')); return; }
-  openPdfBlob(blob, `Brand-${bq.replace(/[^a-z0-9]/gi,'_')}.pdf`);
+  openPdfBlob(blob, `Pending-${bq.replace(/[^a-z0-9]/gi,'_')}.pdf`);
 }
 
 function downloadBrandExcel(){
   const bq = dispatchBrandQuery.trim();
   if(!bq) return;
   if(!window.XLSX){ alert(t('pdf_gen_fail')); return; }
-  const bql = bq.toLowerCase();
-  const matches = bookings.filter(b=>!b.trashed && (b.brand||'').toLowerCase().includes(bql) && inDispatchDateRange(b.orderedAt));
+  const matches = getBrandMatches_();
   if(!matches.length){ alert(t('no_brand_orders')); return; }
+  const all = buildBrandGroups_(matches);
+  const pend = pendingOnlyGroups_(all);
+  if(!pend.length){ alert(t('no_pending_brand')); return; }
 
-  // Aggregate by Article + Colour + Size, same totals shown on screen, plus
-  // a break-out of how many of those sets are pending vs already dispatched.
-  const agg = {};
-  matches.forEach(b=>{
-    const key = b.designNumber + '||' + (b.colour||'-') + '||' + (b.size||'-');
-    if(!agg[key]) agg[key] = { designNumber:b.designNumber, colour:b.colour||'-', size:b.size||'-', total:0, pending:0, dispatched:0 };
-    agg[key].total += b.qty;
-    agg[key][b.status==='dispatched' ? 'dispatched' : 'pending'] += b.qty;
-  });
-  const rows = Object.values(agg).sort((a,b)=>
-    a.designNumber.localeCompare(b.designNumber) || a.colour.localeCompare(b.colour) || a.size.localeCompare(b.size)
-  );
-
-  const sheetData = [['Article','Colour','Size','Total Sets','Pending','Dispatched']];
-  rows.forEach(r=> sheetData.push([r.designNumber, r.colour, r.size, r.total, r.pending, r.dispatched]));
-  const totalSets = matches.reduce((s,b)=>s+b.qty,0);
-  sheetData.push([]);
-  sheetData.push(['', '', '', 'Total', '', totalSets]);
-
-  const ws = XLSX.utils.aoa_to_sheet(sheetData);
-  ws['!cols'] = [{wch:12},{wch:14},{wch:12},{wch:12},{wch:10},{wch:12}];
+  // Sheet 1: only what is still PENDING (what has to be ordered), one clean
+  // line per Article + Colour + Size, customers already combined.
+  const pData = [['Article','Colour','Size','Pending Sets']];
+  let pTotal = 0;
+  pend.forEach(g=>g.colours.forEach(c=>c.sizes.forEach(s=>{
+    pData.push([g.design, c.colour || '-', s.size, s.pending]);
+    pTotal += s.pending;
+  })));
+  pData.push([]);
+  pData.push(['TOTAL', '', '', pTotal]);
+  const ws = XLSX.utils.aoa_to_sheet(pData);
+  ws['!cols'] = [{wch:14},{wch:16},{wch:12},{wch:14}];
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, 'Brand Overview');
-  XLSX.writeFile(wb, `Brand-${bq.replace(/[^a-z0-9]/gi,'_')}.xlsx`);
+  XLSX.utils.book_append_sheet(wb, ws, 'Pending');
+
+  // Sheet 2 (only if something was dispatched): kept separate, so pending and
+  // dispatched never get mixed in the same columns.
+  const dData = [['Article','Colour','Size','Dispatched Sets']];
+  let dTotal = 0;
+  all.forEach(g=>g.colours.forEach(c=>c.sizes.forEach(s=>{
+    if(s.dispatched > 0){ dData.push([g.design, c.colour || '-', s.size, s.dispatched]); dTotal += s.dispatched; }
+  })));
+  if(dData.length > 1){
+    dData.push([]);
+    dData.push(['TOTAL', '', '', dTotal]);
+    const ws2 = XLSX.utils.aoa_to_sheet(dData);
+    ws2['!cols'] = [{wch:14},{wch:16},{wch:12},{wch:16}];
+    XLSX.utils.book_append_sheet(wb, ws2, 'Dispatched');
+  }
+  XLSX.writeFile(wb, `Pending-${bq.replace(/[^a-z0-9]/gi,'_')}.xlsx`);
 }
 
 let dispatchBrandDebounce_ = null;
@@ -3211,6 +3498,7 @@ async function shareActivityWhatsApp(){
 }
 
 applyStaticLanguage();
+updateNotifyBtn_();
 loadData();
 
 // Registers the offline service worker so the app itself (HTML/CSS/JS) can
