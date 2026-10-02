@@ -3455,14 +3455,21 @@ function buildCustomerOrderPdf(cname){
   // of dates being mixed together by design number.
   const rows = bookings.filter(b=>b.customerName===cname && !b.trashed)
     .sort((a,b)=> dispatchDateKey(a.orderedAt).localeCompare(dispatchDateKey(b.orderedAt)) || (a.designNumber).localeCompare(b.designNumber));
-  const total = rows.reduce((s,b)=>s+b.qty,0);
+  let pendTot = 0, doneTot = 0;
   // Includes the order date per line — this list spans every order a
   // customer has ever placed, so staff need to see which line came from
-  // which date, not just the design/size/status.
-  const tableRows = rows.map(b=>[dispatchDateLabel(dispatchDateKey(b.orderedAt)), b.designNumber, b.colour||'-', b.size, b.brand||'-', String(b.qty), b.status==='dispatched'?'Dispatched':'Pending']);
-  const pp = pdfWithPrice_(['Date','Design Number','Colour','Size','Brand','Set','Status'], tableRows, rows, 'Set');
+  // which date. Pending and Dispatched sets sit in separate columns.
+  const tableRows = rows.map(b=>{
+    const done = b.status==='dispatched';
+    if(done) doneTot += b.qty; else pendTot += b.qty;
+    return [dispatchDateLabel(dispatchDateKey(b.orderedAt)), b.designNumber, b.colour||'-', b.size, b.brand||'-', done ? '' : String(b.qty), done ? String(b.qty) : ''];
+  });
+  const total = pendTot + doneTot;
+  const pp = pdfWithPrice_(['Date','Design Number','Colour','Size','Brand','Pending Set','Dispatched Set'], tableRows, rows, 'Brand');
+  const setIdx = pp.columns.length - 2;
+  const colStyles = {}; colStyles[setIdx] = { halign:'center' }; colStyles[setIdx+1] = { halign:'center' };
   return {
-    blob: buildPdfBlob(`Order — ${cname}`, `Subhash Sales Agencies · ${new Date().toLocaleDateString('en-IN')}`, pp.columns, pp.tableRows, `Total: ${total} Sets`),
+    blob: buildPdfBlob(`Order — ${cname}`, `Subhash Sales Agencies · ${new Date().toLocaleDateString('en-IN')}`, pp.columns, pp.tableRows, `Pending: ${pendTot} Set   |   Dispatched: ${doneTot} Set   |   Total: ${total} Set`, { columnStyles: colStyles }),
     total
   };
 }
