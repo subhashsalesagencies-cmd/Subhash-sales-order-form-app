@@ -830,6 +830,40 @@ function buildPdfBlob(title, subtitle, columns, rows, footerText, extraOpts){
   }catch(e){ console.error('PDF build failed', e); return null; }
 }
 
+/* After a PDF is generated, shows a small sheet with: WhatsApp/Share, Download (save),
+   and Open/Print. Every button is a fresh tap, so the phone's share sheet is always allowed. */
+function showPdfActions_(blob, filename, title, shareText){
+  const old = document.getElementById('pdfActionsOverlay');
+  if(old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'pdfActionsOverlay';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center;';
+  ov.innerHTML = `
+    <div style="background:#fff;width:100%;max-width:520px;border-radius:18px 18px 0 0;padding:16px 16px 22px;box-shadow:0 -6px 24px rgba(0,0,0,.25);">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+        <div style="font-weight:700;font-size:15px;color:#1B2430;">📄 PDF ready</div>
+        <button id="pdfActClose" style="background:none;border:none;font-size:22px;color:#5b6472;">✕</button>
+      </div>
+      <div style="font-size:12.5px;color:#5b6472;margin-bottom:12px;word-break:break-word;">${escapeHtml(filename)}</div>
+      <button id="pdfActWa" style="width:100%;background:#25D366;color:#063;border:none;border-radius:12px;padding:13px;font-weight:700;font-size:15px;margin-bottom:8px;">📤 WhatsApp / Share</button>
+      <button id="pdfActDl" style="width:100%;background:#1656A6;color:#fff;border:none;border-radius:12px;padding:13px;font-weight:700;font-size:15px;margin-bottom:8px;">⬇️ Download / Save PDF</button>
+      <button id="pdfActOpen" style="width:100%;background:#EAF1FB;color:#1656A6;border:none;border-radius:12px;padding:13px;font-weight:700;font-size:15px;">🖨️ Open / Print</button>
+    </div>`;
+  document.body.appendChild(ov);
+  const close = ()=>ov.remove();
+  ov.addEventListener('click', e=>{ if(e.target === ov) close(); });
+  document.getElementById('pdfActClose').onclick = close;
+  document.getElementById('pdfActWa').onclick = async ()=>{ await sharePdfBlob(blob, filename, title, shareText || title); };
+  document.getElementById('pdfActDl').onclick = ()=>{
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url), 60000);
+  };
+  document.getElementById('pdfActOpen').onclick = ()=> openPdfBlob(blob, filename);
+}
+
 function openPdfBlob(blob, filename){
   const url = URL.createObjectURL(blob);
   const w = window.open(url, '_blank');
@@ -2571,8 +2605,26 @@ function printBrandOverview(){
   if(!bq) return;
   const matches = getBrandMatches_();
   if(!matches.length){ alert(t('no_brand_orders')); return; }
-  // The printed list is always the set-wise PENDING list (what still has to be
-  // ordered/arranged) — never customer-wise, regardless of the on-screen view.
+
+  // CUSTOMER-WISE DETAIL view -> the original customer-wise PDF (each customer's
+  // lines, with Pending / Dispatched status), same as before.
+  if(dispatchBrandView === 'detail'){
+    const sorted = matches.slice().sort((a,b)=> a.designNumber.localeCompare(b.designNumber) || (a.colour||'').localeCompare(b.colour||'') || a.customerName.localeCompare(b.customerName));
+    const totalSetsAll = sorted.reduce((s,b)=>s+b.qty,0);
+    const rowsD = sorted.map(b=>[b.designNumber, b.colour||'-', b.customerName, b.size, String(b.qty), b.status==='dispatched'?t('dispatched'):t('badge_pending')]);
+    const ppD = pdfWithPrice_(['Article','Colour','Customer','Size','Set','Status'], rowsD, sorted, 'Set');
+    let dateNoteD = '';
+    if(dispatchFromDate || dispatchToDate){
+      dateNoteD = ` (${dispatchFromDate ? dispatchDateLabel(dispatchFromDate) : '…'} – ${dispatchToDate ? dispatchDateLabel(dispatchToDate) : '…'})`;
+    }
+    const titleD = `${t('brand_overview')}: ${bq}${dateNoteD}`;
+    const blobD = buildPdfBlob(titleD, `Subhash Sales Agencies · ${new Date().toLocaleDateString('en-IN')}`, ppD.columns, ppD.tableRows, `${t('total')}: ${totalSetsAll} ${t('sets')}`);
+    if(!blobD){ alert(t('pdf_gen_fail')); return; }
+    showPdfActions_(blobD, `Brand-Customerwise-${bq.replace(/[^a-z0-9]/gi,'_')}.pdf`, titleD, `${titleD} — ${t('total')} ${totalSetsAll} ${t('sets')}`);
+    return;
+  }
+
+  // SIZE-WISE TOTAL view -> set-wise PENDING list (what still has to be ordered/arranged).
   const groups = pendingOnlyGroups_(buildBrandGroups_(matches));
   if(!groups.length){ alert(t('no_pending_brand')); return; }
 
@@ -2604,7 +2656,7 @@ function printBrandOverview(){
     { styles:{ fontSize:11, cellPadding:3.2 }, columnStyles:{ 2:{ halign:'center', cellWidth:35 } } }
   );
   if(!blob){ alert(t('pdf_gen_fail')); return; }
-  openPdfBlob(blob, `Pending-${bq.replace(/[^a-z0-9]/gi,'_')}.pdf`);
+  showPdfActions_(blob, `Pending-${bq.replace(/[^a-z0-9]/gi,'_')}.pdf`, `Pending Sets to Order - ${bq}`, `Pending Sets to Order - ${bq} — Total ${total} Set`);
 }
 
 function downloadBrandExcel(){
@@ -2613,6 +2665,40 @@ function downloadBrandExcel(){
   if(!window.XLSX){ alert(t('pdf_gen_fail')); return; }
   const matches = getBrandMatches_();
   if(!matches.length){ alert(t('no_brand_orders')); return; }
+  // CUSTOMER-WISE DETAIL view -> same lines as the customer-wise PDF, with
+  // Pending Sets and Dispatched Sets in two separate columns.
+  if(dispatchBrandView === 'detail'){
+    const sorted = matches.slice().sort((a,b)=> natCmp_(a.designNumber,b.designNumber) || natCmp_(a.colour||'',b.colour||'') || String(a.customerName).localeCompare(String(b.customerName)) || natCmp_(a.size,b.size));
+    const hasPrice = sorted.some(b=>b.pricePerPcs);
+    const head = ['Article','Colour','Customer','Size'];
+    if(hasPrice) head.push('Price (Rs)');
+    head.push('Pending Sets','Dispatched Sets');
+    const dData = [head];
+    let pT = 0, dT = 0;
+    sorted.forEach(b=>{
+      const done = b.status==='dispatched';
+      const row = [b.designNumber, b.colour||'-', b.customerName, b.size];
+      if(hasPrice) row.push(b.pricePerPcs ? Number(b.pricePerPcs) || String(b.pricePerPcs) : '-');
+      row.push(done ? '' : b.qty, done ? b.qty : '');
+      if(done) dT += b.qty; else pT += b.qty;
+      dData.push(row);
+    });
+    dData.push([]);
+    const tot = ['TOTAL','','',''];
+    if(hasPrice) tot.push('');
+    tot.push(pT, dT);
+    dData.push(tot);
+    const wsD = XLSX.utils.aoa_to_sheet(dData);
+    const cols = [{wch:14},{wch:16},{wch:26},{wch:12}];
+    if(hasPrice) cols.push({wch:11});
+    cols.push({wch:14},{wch:16});
+    wsD['!cols'] = cols;
+    const wbD = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wbD, wsD, 'Customer-wise');
+    XLSX.writeFile(wbD, `Brand-Customerwise-${bq.replace(/[^a-z0-9]/gi,'_')}.xlsx`);
+    return;
+  }
+
   const all = buildBrandGroups_(matches);
   const pend = pendingOnlyGroups_(all);
   if(!pend.length){ alert(t('no_pending_brand')); return; }
