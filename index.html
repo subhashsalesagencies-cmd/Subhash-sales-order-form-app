@@ -2610,15 +2610,29 @@ function printBrandOverview(){
   // lines, with Pending / Dispatched status), same as before.
   if(dispatchBrandView === 'detail'){
     const sorted = matches.slice().sort((a,b)=> a.designNumber.localeCompare(b.designNumber) || (a.colour||'').localeCompare(b.colour||'') || a.customerName.localeCompare(b.customerName));
-    const totalSetsAll = sorted.reduce((s,b)=>s+b.qty,0);
-    const rowsD = sorted.map(b=>[b.designNumber, b.colour||'-', b.customerName, b.size, String(b.qty), b.status==='dispatched'?t('dispatched'):t('badge_pending')]);
-    const ppD = pdfWithPrice_(['Article','Colour','Customer','Size','Set','Status'], rowsD, sorted, 'Set');
+    const hasPriceD = sorted.some(b=>b.pricePerPcs);
+    const colsD = ['Article','Colour','Customer','Order Date','Size'];
+    if(hasPriceD) colsD.push('Price (Rs)');
+    colsD.push('Pending Set','Dispatched Set');
+    let pendAll = 0, doneAll = 0;
+    const rowsD = sorted.map(b=>{
+      const done = b.status==='dispatched';
+      if(done) doneAll += b.qty; else pendAll += b.qty;
+      const r = [b.designNumber, b.colour||'-', b.customerName, dispatchDateLabel(dispatchDateKey(b.orderedAt)), b.size];
+      if(hasPriceD) r.push(b.pricePerPcs ? String(b.pricePerPcs) : '-');
+      r.push(done ? '' : String(b.qty), done ? String(b.qty) : '');
+      return r;
+    });
+    const totalSetsAll = pendAll + doneAll;
+    const ppD = { columns: colsD, tableRows: rowsD };
+    const setColStart = colsD.length - 2;
+    const colStylesD = {}; colStylesD[setColStart] = { halign:'center' }; colStylesD[setColStart+1] = { halign:'center' };
     let dateNoteD = '';
     if(dispatchFromDate || dispatchToDate){
       dateNoteD = ` (${dispatchFromDate ? dispatchDateLabel(dispatchFromDate) : '…'} – ${dispatchToDate ? dispatchDateLabel(dispatchToDate) : '…'})`;
     }
     const titleD = `${t('brand_overview')}: ${bq}${dateNoteD}`;
-    const blobD = buildPdfBlob(titleD, `Subhash Sales Agencies · ${new Date().toLocaleDateString('en-IN')}`, ppD.columns, ppD.tableRows, `${t('total')}: ${totalSetsAll} ${t('sets')}`);
+    const blobD = buildPdfBlob(titleD, `Subhash Sales Agencies · ${new Date().toLocaleDateString('en-IN')}`, ppD.columns, ppD.tableRows, `Pending: ${pendAll} Set   |   Dispatched: ${doneAll} Set   |   ${t('total')}: ${totalSetsAll} Set`, { columnStyles: colStylesD });
     if(!blobD){ alert(t('pdf_gen_fail')); return; }
     showPdfActions_(blobD, `Brand-Customerwise-${bq.replace(/[^a-z0-9]/gi,'_')}.pdf`, titleD, `${titleD} — ${t('total')} ${totalSetsAll} ${t('sets')}`);
     return;
@@ -2670,26 +2684,26 @@ function downloadBrandExcel(){
   if(dispatchBrandView === 'detail'){
     const sorted = matches.slice().sort((a,b)=> natCmp_(a.designNumber,b.designNumber) || natCmp_(a.colour||'',b.colour||'') || String(a.customerName).localeCompare(String(b.customerName)) || natCmp_(a.size,b.size));
     const hasPrice = sorted.some(b=>b.pricePerPcs);
-    const head = ['Article','Colour','Customer','Size'];
+    const head = ['Article','Colour','Customer','Order Date','Size'];
     if(hasPrice) head.push('Price (Rs)');
     head.push('Pending Sets','Dispatched Sets');
     const dData = [head];
     let pT = 0, dT = 0;
     sorted.forEach(b=>{
       const done = b.status==='dispatched';
-      const row = [b.designNumber, b.colour||'-', b.customerName, b.size];
+      const row = [b.designNumber, b.colour||'-', b.customerName, dispatchDateLabel(dispatchDateKey(b.orderedAt)), b.size];
       if(hasPrice) row.push(b.pricePerPcs ? Number(b.pricePerPcs) || String(b.pricePerPcs) : '-');
       row.push(done ? '' : b.qty, done ? b.qty : '');
       if(done) dT += b.qty; else pT += b.qty;
       dData.push(row);
     });
     dData.push([]);
-    const tot = ['TOTAL','','',''];
+    const tot = ['TOTAL','','','',''];
     if(hasPrice) tot.push('');
     tot.push(pT, dT);
     dData.push(tot);
     const wsD = XLSX.utils.aoa_to_sheet(dData);
-    const cols = [{wch:14},{wch:16},{wch:26},{wch:12}];
+    const cols = [{wch:14},{wch:16},{wch:26},{wch:14},{wch:12}];
     if(hasPrice) cols.push({wch:11});
     cols.push({wch:14},{wch:16});
     wsD['!cols'] = cols;
