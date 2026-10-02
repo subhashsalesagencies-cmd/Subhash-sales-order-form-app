@@ -613,6 +613,8 @@ const I18N = {
     no_brand_orders:'No orders found for this brand.',
     no_pending_brand:'No pending sets for this brand.', dup_design_alert:'This design already created to this customer',
     dup_in_cart:'This design + colour is already added in this order list.', dup_prev_order:'Earlier order', notif_on_msg:'🔔 New-order notifications ON', notif_off_msg:'🔕 New-order notifications OFF',
+    add_more_lines:'Add new design / size to this order', add_line_btn:'+ Add', add_line_hint:'Fill and tap + Add (or just Save Changes) — it joins this order.',
+    brand_word:'Brand', price_word2:'Price', line_exists_err:'This design + colour + size is already in this order — change its Set count above instead.', saved_ok:'✓ Saved',
     new_order_title:'New Order', notif_blocked:'Browser notifications are blocked. Please allow notifications for this app in your browser/phone settings. In-app alerts will still show while the app is open.',
 
     search_customer:'Search Customer', type_name:'Type name', search_by_brand:'Search by Brand',
@@ -699,6 +701,8 @@ const I18N = {
     no_brand_orders:'इस ब्रांड का कोई ऑर्डर नहीं मिला।',
     no_pending_brand:'इस ब्रांड का कोई पेंडिंग सेट नहीं है।', dup_design_alert:'यह डिज़ाइन इस कस्टमर को पहले ही बनाया जा चुका है (This design already created to this customer)',
     dup_in_cart:'यह डिज़ाइन + कलर इस ऑर्डर की लिस्ट में पहले से जुड़ा है।', dup_prev_order:'पिछला ऑर्डर', notif_on_msg:'🔔 नए ऑर्डर की सूचना चालू', notif_off_msg:'🔕 नए ऑर्डर की सूचना बंद',
+    add_more_lines:'इस ऑर्डर में नया डिज़ाइन / साइज़ जोड़ें', add_line_btn:'+ जोड़ें', add_line_hint:'भरकर + जोड़ें दबाएं (या सीधे बदलाव सेव करें) — यह इसी ऑर्डर में जुड़ जाएगा।',
+    brand_word:'ब्रांड', price_word2:'रेट', line_exists_err:'यह डिज़ाइन + कलर + साइज़ इस ऑर्डर में पहले से है — ऊपर उसका सेट बदलें।', saved_ok:'✓ सेव हो गया',
     new_order_title:'नया ऑर्डर', notif_blocked:'ब्राउज़र की नोटिफिकेशन बंद है। कृपया फ़ोन/ब्राउज़र सेटिंग में इस ऐप की नोटिफिकेशन चालू करें। ऐप खुला होने पर ऐप के अंदर अलर्ट दिखेगा।',
 
     search_customer:'ग्राहक खोजें', type_name:'नाम लिखें', search_by_brand:'ब्रांड से खोजें',
@@ -948,7 +952,8 @@ async function storageGet(key){
         // READS staffApprovals (never writes it) has nothing cached for
         // when they go offline, and the app falls back to showing no
         // approved tabs at all even though the owner granted them access.
-        try{ localStorage.setItem('ssa_'+key, data.value); }catch(e){}
+        // Don't overwrite this device's own not-yet-uploaded changes with older cloud data.
+        if(!isKeyBusy_(key)){ try{ localStorage.setItem('ssa_'+key, data.value); }catch(e){} }
         return data.value;
       }
       return null;
@@ -957,26 +962,39 @@ async function storageGet(key){
   try{ return localStorage.getItem('ssa_'+key); }
   catch(e){ return null; }
 }
+const pushInFlight_ = new Set();   // keys currently uploading
+const pushQueued_ = new Set();     // keys changed again while uploading -> upload once more after
 async function storageSet(key, value){
-  // Always save locally first — instant, and this is what keeps the app
-  // fully usable offline (orders, dispatches, everything).
+  // Saved on this device instantly. The upload to Google Sheets (slow) then
+  // runs IN THE BACKGROUND, so the screen never waits for it.
   try{ localStorage.setItem('ssa_'+key, value); }
   catch(e){ console.error('local storage failed', e); }
 
-  if(cloudAvailable && navigator.onLine){
+  if(cloudAvailable && navigator.onLine){ pushKeyInBackground_(key); return; }
+  markKeyDirty_(key);
+}
+
+function pushKeyInBackground_(key){
+  markKeyDirty_(key);                         // stays "Syncing…" until the upload really finishes
+  if(pushInFlight_.has(key)){ pushQueued_.add(key); return; }
+  pushInFlight_.add(key);
+  (async ()=>{
     try{
+      const value = localStorage.getItem('ssa_'+key);
+      if(value === null){ markKeySynced_(key); return; }
       await fetch(SHEET_SCRIPT_URL, {
         method:'POST',
         headers: {'Content-Type':'text/plain;charset=utf-8'},
         body: JSON.stringify({ key, value })
       });
-      markKeySynced_(key);
-      return;
-    }catch(e){ console.error('Sheet save failed, will retry when back online', e); }
-  }
-  // No internet (or the request failed) — remember this key needs syncing,
-  // and try again automatically once we're back online.
-  markKeyDirty_(key);
+      if(!pushQueued_.has(key)) markKeySynced_(key);
+    }catch(e){
+      console.error('Sheet save failed, will retry when back online', e);  // key stays dirty -> retried automatically
+    }finally{
+      pushInFlight_.delete(key);
+      if(pushQueued_.has(key)){ pushQueued_.delete(key); pushKeyInBackground_(key); }
+    }
+  })();
 }
 
 /* ---------------- OFFLINE QUEUE: remembers which keys still need to reach
@@ -1005,6 +1023,7 @@ async function flushDirtyKeys_(){
   isFlushing_ = true;
   try{
     for(const key of [...dirtyKeys]){
+      if(pushInFlight_.has(key)) continue;   // already uploading
       try{
         const value = localStorage.getItem('ssa_'+key);
         if(value === null){ markKeySynced_(key); continue; }
@@ -1052,28 +1071,81 @@ function normalizeBookingFields_(arr){
   });
 }
 
+// Cloud values last applied, so an unchanged refresh doesn't redraw the screen.
+let lastCloudRaw_ = { b:null, a:null, s:null };
+
+async function fetchCloudState_(){
+  // all three requests go out together (not one after another)
+  const r = await Promise.all([ storageGet('bookings'), storageGet('activityLog'), storageGet('staffApprovals') ]);
+  return { b:r[0], a:r[1], s:r[2] };
+}
+// A key is "busy" while this device still has changes on their way to the cloud;
+// a refresh must not overwrite those local changes with older cloud data.
+function isKeyBusy_(key){ return dirtyKeys.includes(key) || pushInFlight_.has(key) || pushQueued_.has(key); }
+
+function applyCloudState_(st){
+  let changed = false;
+  try{
+    if(!isKeyBusy_('bookings') && st.b !== lastCloudRaw_.b){
+      const nb = st.b ? JSON.parse(st.b) : [];
+      normalizeBookingFields_(nb);
+      detectNewOrders_(nb);
+      bookings = nb; lastCloudRaw_.b = st.b; changed = true;
+    }
+  }catch(e){ console.error('bookings parse', e); }
+  try{
+    if(!isKeyBusy_('activityLog') && st.a !== lastCloudRaw_.a){
+      activityLog = st.a ? JSON.parse(st.a) : []; lastCloudRaw_.a = st.a; changed = true;
+    }
+  }catch(e){ console.error('activity parse', e); }
+  try{
+    if(!isKeyBusy_('staffApprovals') && st.s !== lastCloudRaw_.s){
+      staffApprovals = st.s ? JSON.parse(st.s) : []; lastCloudRaw_.s = st.s; changed = true;
+    }
+  }catch(e){ console.error('approvals parse', e); }
+  return changed;
+}
+
+// Redraws after fresh data arrives, without disturbing whatever the person is typing/editing.
+function rerenderAfterData_(){
+  if(currentTab === 'book' || editingPendingGroup){ renderTopbarRight(); updateDatalists(); return; }
+  const ae = document.activeElement;
+  const typing = ae && (ae.tagName==='INPUT' || ae.tagName==='TEXTAREA' || ae.tagName==='SELECT');
+  if(typing) renderTopbarRight(); else render();
+}
+
 async function loadData(){
-  try{
-    const v = await storageGet('bookings');
-    bookings = v ? JSON.parse(v) : [];
-    normalizeBookingFields_(bookings);
-  }catch(e){ bookings = []; }
-  seenBookingIds_ = new Set(bookings.map(b=>b.id)); // baseline: existing orders never trigger a notification
-  try{
-    const v2 = await storageGet('activityLog');
-    activityLog = v2 ? JSON.parse(v2) : [];
-  }catch(e){ activityLog = []; }
-  try{
-    const v3 = await storageGet('staffApprovals');
-    staffApprovals = v3 ? JSON.parse(v3) : [];
-  }catch(e){ staffApprovals = []; }
   try{
     const saved = localStorage.getItem('ssa_currentStaff');
     if(saved) currentStaff = JSON.parse(saved);
   }catch(e){}
+
+  // 1) Show the app INSTANTLY from this device's saved copy (no waiting for the internet).
+  let cached = false;
+  try{
+    const lb = localStorage.getItem('ssa_bookings');
+    if(lb !== null){
+      bookings = JSON.parse(lb) || [];
+      normalizeBookingFields_(bookings);
+      const la = localStorage.getItem('ssa_activityLog'); activityLog = la ? JSON.parse(la) : [];
+      const ls = localStorage.getItem('ssa_staffApprovals'); staffApprovals = ls ? JSON.parse(ls) : [];
+      seenBookingIds_ = new Set(bookings.map(b=>b.id));
+      cached = true;
+    }
+  }catch(e){ bookings = []; activityLog = []; staffApprovals = []; cached = false; }
+  if(cached){ loaded = true; render(); updateSyncBadge_(); }
+
+  // 2) Then quietly bring in the latest from Google Sheets.
+  let changed = false;
+  try{
+    const st = await fetchCloudState_();
+    changed = applyCloudState_(st);
+  }catch(e){ console.error('Initial cloud load failed', e); }
+
   await purgeOldRecords();
   loaded = true;
-  render();
+  if(!cached) render();
+  else if(changed) rerenderAfterData_();
   updateSyncBadge_();
   startAutoRefresh_();
 }
@@ -1124,29 +1196,10 @@ function startAutoRefresh_(){
 async function silentRefresh_(){
   if(!currentStaff) return;
   try{
-    const v = await storageGet('bookings');
-    const newBookings = v ? JSON.parse(v) : [];
-    normalizeBookingFields_(newBookings);
-    detectNewOrders_(newBookings);
-    bookings = newBookings;
-    const v2 = await storageGet('activityLog');
-    activityLog = v2 ? JSON.parse(v2) : [];
-    const v3 = await storageGet('staffApprovals');
-    staffApprovals = v3 ? JSON.parse(v3) : [];
-
-    if(currentTab === 'book'){
-      // Data is refreshed, but leave the Order form body alone so an
-      // in-progress order isn't interrupted — just keep the topbar
-      // (Pending count, Synced badge) current, since redrawing that
-      // can't disturb anything someone is typing.
-      renderTopbarRight();
-    } else {
-      // Also leave the screen alone while a text box has focus (e.g. someone
-      // typing in a search box), otherwise the box is rebuilt under them.
-      const ae = document.activeElement;
-      const typing = ae && (ae.tagName==='INPUT' || ae.tagName==='TEXTAREA' || ae.tagName==='SELECT');
-      if(typing) renderTopbarRight(); else render();
-    }
+    const st = await fetchCloudState_();
+    const changed = applyCloudState_(st);
+    if(!changed){ renderTopbarRight(); return; }   // nothing new: no redraw, no flicker
+    rerenderAfterData_();
   }catch(e){ console.error('Auto-refresh failed', e); }
 }
 
@@ -1315,7 +1368,7 @@ function detectNewOrders_(list){
     const ob = b.orderedBy;
     const mine = ob && ob.name === currentStaff.name && (ob.mobile||'') === (currentStaff.mobile||'');
     if(mine) return;                                                   // own orders: no alert
-    if(b.status !== 'pending' || b.trashed) return;
+    if(b.status !== 'pending' || b.trashed || b.addedLater) return;
     if(Date.now() - new Date(b.orderedAt).getTime() > 6*60*60*1000) return; // ignore old orders arriving late
     const key = b.customerName + '|' + b.orderedAt;
     if(!groups[key]) groups[key] = { key:key, customer:b.customerName, brand:b.brand, by:(ob && ob.name) || '', sets:0 };
@@ -3069,8 +3122,23 @@ function renderPendingOrders(main){
         return `<div class="cust-card">
           <div class="cust-head"><span class="name">${escapeHtml(cname)}</span><span class="set-pill pending">${t('editing')}</span></div>
           ${editRows}
+          <div style="margin-top:12px;padding-top:10px;border-top:1px dashed var(--line);">
+            <div class="section-label" style="margin-top:0;">➕ ${t('add_more_lines')}</div>
+            <div id="editNewList">${editNewListHtml_()}</div>
+            <div id="editNewMsg"></div>
+            <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center;">
+              <input id="editNewDesign" placeholder="${t('design_number')}" style="width:92px;">
+              <input id="editNewColour" placeholder="${t('colour_optional')}" style="width:92px;">
+              <input id="editNewSize" placeholder="${t('size')} (2/6 8/16)" style="width:118px;" onkeydown="if(event.key==='Enter'){event.preventDefault();addEditNewLine_();}">
+              <input id="editNewQty" type="number" min="1" value="1" style="width:56px;">
+              <input id="editNewBrand" placeholder="${t('brand_word')}" value="${escapeHtml((rows[0] && rows[0].brand) || '')}" style="width:100px;">
+              <input id="editNewPrice" type="number" inputmode="decimal" min="0" placeholder="₹" style="width:64px;">
+              <button class="action-btn pr" style="padding:8px 12px;" onclick="addEditNewLine_()">${t('add_line_btn')}</button>
+            </div>
+            <div style="font-size:11.5px;color:#7e8896;margin-top:4px;">${t('add_line_hint')}</div>
+          </div>
           <div class="action-row">
-            <button class="action-btn pr" onclick="saveEditPendingGroup('${cname.replace(/'/g,"\\'")}','${dk}')">${t('save_changes')}</button>
+            <button class="action-btn pr" onclick="saveEditPendingGroup('${cname.replace(/'/g,"\\'")}','${dk}',this)">${t('save_changes')}</button>
             <button class="action-btn del" onclick="cancelEditPendingGroup()">${t('cancel')}</button>
           </div>
         </div>`;
@@ -3106,12 +3174,26 @@ function renderPendingOrders(main){
   main.innerHTML = searchBar + cards;
 }
 
+let editNewLines_ = [];      // lines staged in the Pending-edit card, added to the order on Save
+let isSavingEdit_ = false;
+
+function editNewListHtml_(){
+  return editNewLines_.map((l,i)=>`<div class="item-line"><span>${t('design_word')} ${escapeHtml(l.design)}${l.colour?(' · '+escapeHtml(l.colour)):''} · ${escapeHtml(l.size)}${l.brand?(' · '+escapeHtml(l.brand)):''}${l.price?(' · ₹'+escapeHtml(String(l.price))):''}</span><span style="display:inline-flex;align-items:center;gap:8px;"><span>${l.qty} ${t('set')}</span><button class="chip x" style="border:none;background:none;color:var(--rust);font-weight:700;" onclick="removeEditNewLine_(${i})">✕</button></span></div>`).join('');
+}
+function refreshEditNewList_(){
+  const el = document.getElementById('editNewList');
+  if(el) el.innerHTML = editNewListHtml_();
+}
+function removeEditNewLine_(i){ editNewLines_.splice(i,1); refreshEditNewList_(); }
+
 function startEditPendingGroup(cname, dk){
   editingPendingGroup = { cname, dk };
+  editNewLines_ = [];
   render();
 }
 function cancelEditPendingGroup(){
   editingPendingGroup = null;
+  editNewLines_ = [];
   render();
 }
 function removePendingEditRow(bookingId){
@@ -3119,31 +3201,118 @@ function removePendingEditRow(bookingId){
   if(row) row.dataset.removed = '1';
   if(row) row.style.display = 'none';
 }
-async function saveEditPendingGroup(cname, dk){
-  const rows = getPendingDatedRows(cname, dk);
-  for(const b of rows){
-    const designEl = document.getElementById(`editDesign-${b.id}`);
-    if(!designEl) continue; // row was marked removed
-    const row = designEl.closest('.item-line');
-    if(row && row.dataset.removed === '1'){
-      b.trashed = true;
-      b.trashedAt = new Date().toISOString();
-      b.trashedBy = currentStaff ? { name: currentStaff.name, mobile: currentStaff.mobile } : null;
-      continue;
-    }
-    const newDesign = designEl.value.trim();
-    const newColour = document.getElementById(`editColour-${b.id}`).value.trim();
-    const newSize = document.getElementById(`editSize-${b.id}`).value.trim();
-    const newQty = parseInt(document.getElementById(`editQty-${b.id}`).value) || b.qty;
-    if(newDesign) b.designNumber = newDesign;
-    b.colour = newColour;
-    if(newSize) b.size = newSize;
-    b.qty = newQty;
+
+// Stages one new design/size line (sizes can be typed together, e.g. "2/6 8/16").
+// Returns true if something was staged, false if there was an error or nothing to add.
+function addEditNewLine_(){
+  if(!editingPendingGroup) return false;
+  const val = id => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
+  const design = val('editNewDesign'), colour = val('editNewColour'), rawSize = val('editNewSize');
+  const brand = val('editNewBrand'), price = val('editNewPrice');
+  const qty = parseInt(val('editNewQty')) || 0;
+  const msg = document.getElementById('editNewMsg');
+  if(!design && !rawSize) return false;                         // nothing typed
+  if(!design){ if(msg) msg.innerHTML = `<div class="msg err">${t('enter_design_err')}</div>`; return false; }
+  if(!rawSize || qty <= 0){ if(msg) msg.innerHTML = `<div class="msg err">${t('size_qty_err')}</div>`; return false; }
+
+  const tokens = rawSize.split(/[\s,]+/).map(s=>s.trim()).filter(Boolean);
+  const sizes = tokens.length === 1 ? expandSizeRange_(tokens[0], brand) : tokens;
+  if(!sizes.length){ if(msg) msg.innerHTML = `<div class="msg err">${t('size_qty_err')}</div>`; return false; }
+
+  const { cname, dk } = editingPendingGroup;
+  const groupRows = getPendingDatedRows(cname, dk);
+  const nd = normKey_(design), nc = normKey_(colour), nb = normKey_(brand);
+
+  // Same customer + brand + design + colour already ordered on ANOTHER date -> block (same rule as new orders).
+  // Inside THIS order it's fine: it just means adding one more size to that design.
+  const inThisOrder = groupRows.some(b=>normKey_(b.designNumber)===nd && normKey_(b.colour)===nc && normKey_(b.brand)===nb);
+  if(!inThisOrder && nb){
+    const other = bookings.find(b=>!b.trashed && normKey_(b.customerName)===normKey_(cname) && normKey_(b.brand)===nb &&
+      normKey_(b.designNumber)===nd && normKey_(b.colour)===nc && dispatchDateKey(b.orderedAt)!==dk);
+    if(other){ showDuplicateAlert_(design, colour, other); return false; }
   }
-  await saveData();
-  await logActivity('Pending Order Edited', `${cname} — ${dispatchDateLabel(dk)}`);
-  editingPendingGroup = null;
-  render();
+  // Exact same size line already in this order (or already staged) -> don't double it.
+  for(const sz of sizes){
+    const ns = normKey_(sz);
+    const exists = groupRows.some(b=>normKey_(b.designNumber)===nd && normKey_(b.colour)===nc && normKey_(b.size)===ns) ||
+      editNewLines_.some(l=>normKey_(l.design)===nd && normKey_(l.colour)===nc && normKey_(l.size)===ns);
+    if(exists){ alert(`${design}${colour?' · '+colour:''} · ${sz}\n${t('line_exists_err')}`); return false; }
+  }
+
+  sizes.forEach(size=> editNewLines_.push({ design, colour, size, qty, brand, price }));
+  ['editNewDesign','editNewColour','editNewSize','editNewPrice'].forEach(id=>{ const el = document.getElementById(id); if(el) el.value = ''; });
+  const q = document.getElementById('editNewQty'); if(q) q.value = '1';
+  if(msg) msg.innerHTML = '';
+  refreshEditNewList_();
+  const d = document.getElementById('editNewDesign'); if(d) d.focus();
+  return true;
+}
+
+async function saveEditPendingGroup(cname, dk, btn){
+  if(isSavingEdit_) return;
+  // Anything typed in the "add new line" boxes but not yet tapped "+ Add" is added now.
+  const hasTyped = ['editNewDesign','editNewSize'].some(id=>{ const el = document.getElementById(id); return el && el.value.trim(); });
+  if(hasTyped && !addEditNewLine_()) return;     // error already shown — stay in edit mode
+
+  // Show the button reacting RIGHT AWAY
+  isSavingEdit_ = true;
+  if(btn){ btn.disabled = true; btn.style.opacity = '0.6'; btn.textContent = '⏳ ' + t('saving_word'); }
+  const cancelBtn = btn && btn.parentElement ? btn.parentElement.querySelector('.del') : null;
+  if(cancelBtn) cancelBtn.disabled = true;
+  await new Promise(r=>setTimeout(r, 30));       // lets the browser paint the "Saving…" state first
+
+  try{
+    const rows = getPendingDatedRows(cname, dk);
+    const baseOrderedAt = rows[0] ? rows[0].orderedAt : new Date().toISOString();
+    const fallbackBrand = rows[0] ? (rows[0].brand || '') : '';
+    for(const b of rows){
+      const designEl = document.getElementById(`editDesign-${b.id}`);
+      if(!designEl) continue; // row was marked removed
+      const row = designEl.closest('.item-line');
+      if(row && row.dataset.removed === '1'){
+        b.trashed = true;
+        b.trashedAt = new Date().toISOString();
+        b.trashedBy = currentStaff ? { name: currentStaff.name, mobile: currentStaff.mobile } : null;
+        continue;
+      }
+      const newDesign = designEl.value.trim();
+      const newColour = document.getElementById(`editColour-${b.id}`).value.trim();
+      const newSize = document.getElementById(`editSize-${b.id}`).value.trim();
+      const newQty = parseInt(document.getElementById(`editQty-${b.id}`).value) || b.qty;
+      if(newDesign) b.designNumber = newDesign;
+      b.colour = newColour;
+      if(newSize) b.size = newSize;
+      b.qty = newQty;
+    }
+    // New lines join the SAME order (same customer + same order date), so they show in this same card.
+    let added = 0;
+    editNewLines_.forEach(l=>{
+      bookings.push({
+        id: uid(),
+        customerName: cname,
+        brand: l.brand || fallbackBrand,
+        designNumber: l.design,
+        colour: l.colour || '',
+        size: l.size,
+        qty: l.qty,
+        pricePerPcs: l.price || '',
+        status: 'pending',
+        orderedAt: baseOrderedAt,
+        dispatchedAt: null,
+        orderedBy: currentStaff ? { name: currentStaff.name, mobile: currentStaff.mobile } : null,
+        addedLater: true
+      });
+      added += l.qty;
+    });
+    await saveData();
+    await logActivity('Pending Order Edited', `${cname} — ${dispatchDateLabel(dk)}${added ? ' (+' + added + ' sets added)' : ''}`);
+    editingPendingGroup = null;
+    editNewLines_ = [];
+    render();
+    showInAppToast_(t('saved_ok'));
+  } finally {
+    isSavingEdit_ = false;
+  }
 }
 
 function getPendingDatedRows(cname, dk){
