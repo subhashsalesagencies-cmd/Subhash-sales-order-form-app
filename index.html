@@ -805,16 +805,20 @@ function buildPdfBlob(title, subtitle, columns, rows, footerText, extraOpts){
     const doc = new jsPDF();
 
     const pageW = doc.internal.pageSize.getWidth(), pageH = doc.internal.pageSize.getHeight();
-    // Letterhead + title boxes are drawn by this function so the SAME header can be
-    // repeated on every page of the PDF. It returns the Y where the table may start.
+    // Letterhead + title boxes (FIRST page only). Returns the Y where the table starts.
     const drawHeader = ()=>{
+    // Double border: a firmer outer line plus a fine inner line, so the boxes stand out.
+    const dblRect = (x, y, w, h)=>{
+      doc.setLineWidth(0.6); doc.rect(x, y, w, h);
+      doc.setLineWidth(0.2); doc.rect(x + 1.3, y + 1.3, w - 2.6, h - 2.6);
+    };
     const bx = 14, bw = pageW - 28;                 // content box: 14mm side margins
     doc.setDrawColor(40,50,65);
     doc.setLineWidth(0.4);
 
     // ---- Letterhead box: logo + name / address / contact, centred, with a full border ----
-    const hy = 11, hh = 27;
-    doc.rect(bx, hy, bw, hh);
+    const hy = 11, hh = 28;
+    dblRect(bx, hy, bw, hh);
     const nameTxt = `Name : ${COMPANY_NAME}`;
     const addrTxt = `Address : ${COMPANY_ADDRESS}`;
     const contTxt = `Contact No : ${COMPANY_CONTACT}`;
@@ -840,14 +844,14 @@ function buildPdfBlob(title, subtitle, columns, rows, footerText, extraOpts){
     const tLines = doc.splitTextToSize(String(title || ''), bw - 8);
     doc.setFontSize(10);
     const sLines = doc.splitTextToSize(String(subtitle || ''), bw - 8);
-    const th = 4 + tLines.length * 6.5 + sLines.length * 5 + 2.5;
-    doc.rect(bx, ty, bw, th);
+    const th = 5.5 + tLines.length * 6.5 + sLines.length * 5 + 3;
+    dblRect(bx, ty, bw, th);
     doc.setFontSize(14);
     doc.setTextColor(20,20,20);
-    tLines.forEach((ln,i)=> doc.text(ln, pageW / 2, ty + 4 + 4.5 + i * 6.5, { align: 'center' }));
+    tLines.forEach((ln,i)=> doc.text(ln, pageW / 2, ty + 5.5 + 4.5 + i * 6.5, { align: 'center' }));
     doc.setFontSize(10);
     doc.setTextColor(90,100,115);
-    sLines.forEach((ln,i)=> doc.text(ln, pageW / 2, ty + 4 + tLines.length * 6.5 + 2 + i * 5, { align: 'center' }));
+    sLines.forEach((ln,i)=> doc.text(ln, pageW / 2, ty + 5.5 + tLines.length * 6.5 + 2 + i * 5, { align: 'center' }));
     doc.setTextColor(20,20,20);
     doc.setLineWidth(0.2);
     return ty + th + 5;
@@ -859,26 +863,24 @@ function buildPdfBlob(title, subtitle, columns, rows, footerText, extraOpts){
       body: rows,
       styles: { fontSize: 9, cellPadding: 3 },
       headStyles: { fillColor: [22,86,166], textColor: [255,255,255] },
-      margin: { top: tableStart, right: 14, bottom: 14, left: 14 },   // later pages start below the repeated header
+      margin: { top: 14, right: 14, bottom: 14, left: 14 },
       theme: 'grid'
     }, extraOpts || {}));
     if(footerText){
       const finalY = (doc.lastAutoTable && doc.lastAutoTable.finalY) || tableStart;
       let y = finalY + 10;
-      if(y > pageH - 14){ doc.addPage(); y = tableStart + 6; }   // below the repeated header
+      if(y > pageH - 14){ doc.addPage(); y = 24; }
       doc.setFontSize(11);
       doc.setTextColor(20,20,20);
       doc.text(footerText, 14, y);
     }
-    // Header repeated on every page after the first, and a small page number
-    // ("Page 1 of 4") in the top-left corner of every page.
+    // Small page number ("Page 1 of 4") in the top-RIGHT corner of every page.
     const totalPages = doc.getNumberOfPages();
     for(let i = 1; i <= totalPages; i++){
       doc.setPage(i);
-      if(i > 1) drawHeader();
       doc.setFontSize(8);
       doc.setTextColor(60,70,85);
-      doc.text(`Page ${i} of ${totalPages}`, 14, 7);
+      doc.text(`Page ${i} of ${totalPages}`, pageW - 14, 7, { align: 'right' });
     }
     return doc.output('blob');
   }catch(e){ console.error('PDF build failed', e); return null; }
