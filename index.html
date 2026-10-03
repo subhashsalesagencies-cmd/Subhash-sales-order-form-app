@@ -458,7 +458,14 @@ let doSearchDate = '';       // yyyy-mm-dd
 let pdSearchCustomer = '';
 let editingPendingGroup = null; // { cname, dk } — which Pending-tab group is currently in edit mode
 let pdSearchBrand = '';
-let pdSearchDate = ''; // yyyy-mm-dd
+let pdFromDate = ''; // yyyy-mm-dd
+let pdToDate = '';   // yyyy-mm-dd
+function inPdRange_(orderedAt){
+  const k = dispatchDateKey(orderedAt);
+  if(pdFromDate && k < pdFromDate) return false;
+  if(pdToDate && k > pdToDate) return false;
+  return true;
+}
 
 // activity tab filter state
 let activityDateFilter = ''; // yyyy-mm-dd
@@ -581,7 +588,7 @@ const I18N = {
     customer_name:'Customer Name', enter_customer_name:'Enter customer name',
     brand_name:'Brand Name', enter_brand_name:'Enter brand name',
     add_design:'Add Design', design_number:'Design Number', design_ph:'e.g. 2145',
-    colour_optional:'Colour (optional)', colour_ph:'e.g. Navy Purple',
+    colour_optional:'Colour (optional)', colour_ph:'e.g. Red Blue Green',
     size:'Size', size_ph:'Tap to choose or type a size', no_size_added:'No size added yet',
     size_add_hint:'Tap + to add each size straight into the order below',
     dispatch_btn:'Dispatch', dispatching:'Dispatching…',
@@ -612,7 +619,7 @@ const I18N = {
     from_date:'From Date', to_date:'To Date', brand_overview:'Brand Overview', articles_word:'articles',
     no_brand_orders:'No orders found for this brand.',
     no_pending_brand:'No pending sets for this brand.', dup_design_alert:'This design already created to this customer',
-    dup_in_cart:'This design + colour is already added in this order list.', dup_prev_order:'Earlier order', notif_on_msg:'🔔 New-order notifications ON', notif_off_msg:'🔕 New-order notifications OFF',
+    dup_in_cart:'already in this order list', dup_skipped_note:'Only the repeated ones were skipped — the rest were added.', dup_prev_order:'Earlier order', notif_on_msg:'🔔 New-order notifications ON', notif_off_msg:'🔕 New-order notifications OFF',
     add_more_lines:'Add new design / size to this order', add_line_btn:'+ Add', add_line_hint:'Fill and tap + Add (or just Save Changes) — it joins this order.',
     brand_word:'Brand', price_word2:'Price', line_exists_err:'This design + colour + size is already in this order — change its Set count above instead.', saved_ok:'✓ Saved',
     new_order_title:'New Order', notif_blocked:'Browser notifications are blocked. Please allow notifications for this app in your browser/phone settings. In-app alerts will still show while the app is open.',
@@ -669,7 +676,7 @@ const I18N = {
     customer_name:'ग्राहक का नाम', enter_customer_name:'ग्राहक का नाम लिखें',
     brand_name:'ब्रांड का नाम', enter_brand_name:'ब्रांड का नाम लिखें',
     add_design:'डिज़ाइन जोड़ें', design_number:'डिज़ाइन नंबर', design_ph:'जैसे 2145',
-    colour_optional:'कलर (वैकल्पिक)', colour_ph:'जैसे नेवी पर्पल',
+    colour_optional:'कलर (वैकल्पिक)', colour_ph:'जैसे लाल नीला हरा',
     size:'साइज़', size_ph:'चुनने के लिए टैप करें या साइज़ लिखें', no_size_added:'अभी कोई साइज़ नहीं जोड़ा गया',
     size_add_hint:'हर साइज़ जोड़ने के लिए + दबाएं, सीधा नीचे ऑर्डर में जुड़ जाएगा',
     dispatch_btn:'डिस्पैच', dispatching:'डिस्पैच हो रहा है…',
@@ -700,7 +707,7 @@ const I18N = {
     from_date:'शुरू तारीख', to_date:'आखिरी तारीख', brand_overview:'ब्रांड की पूरी सूची', articles_word:'आर्टिकल',
     no_brand_orders:'इस ब्रांड का कोई ऑर्डर नहीं मिला।',
     no_pending_brand:'इस ब्रांड का कोई पेंडिंग सेट नहीं है।', dup_design_alert:'यह डिज़ाइन इस कस्टमर को पहले ही बनाया जा चुका है (This design already created to this customer)',
-    dup_in_cart:'यह डिज़ाइन + कलर इस ऑर्डर की लिस्ट में पहले से जुड़ा है।', dup_prev_order:'पिछला ऑर्डर', notif_on_msg:'🔔 नए ऑर्डर की सूचना चालू', notif_off_msg:'🔕 नए ऑर्डर की सूचना बंद',
+    dup_in_cart:'इस ऑर्डर की लिस्ट में पहले से है', dup_skipped_note:'सिर्फ दोहराए गए हटाए गए — बाकी जुड़ गए।', dup_prev_order:'पिछला ऑर्डर', notif_on_msg:'🔔 नए ऑर्डर की सूचना चालू', notif_off_msg:'🔕 नए ऑर्डर की सूचना बंद',
     add_more_lines:'इस ऑर्डर में नया डिज़ाइन / साइज़ जोड़ें', add_line_btn:'+ जोड़ें', add_line_hint:'भरकर + जोड़ें दबाएं (या सीधे बदलाव सेव करें) — यह इसी ऑर्डर में जुड़ जाएगा।',
     brand_word:'ब्रांड', price_word2:'रेट', line_exists_err:'यह डिज़ाइन + कलर + साइज़ इस ऑर्डर में पहले से है — ऊपर उसका सेट बदलें।', saved_ok:'✓ सेव हो गया',
     new_order_title:'नया ऑर्डर', notif_blocked:'ब्राउज़र की नोटिफिकेशन बंद है। कृपया फ़ोन/ब्राउज़र सेटिंग में इस ऐप की नोटिफिकेशन चालू करें। ऐप खुला होने पर ऐप के अंदर अलर्ट दिखेगा।',
@@ -822,13 +829,25 @@ function buildPdfBlob(title, subtitle, columns, rows, footerText, extraOpts){
       body: rows,
       styles: { fontSize: 9, cellPadding: 3 },
       headStyles: { fillColor: [22,86,166], textColor: [255,255,255] },
+      margin: { top: 14, right: 14, bottom: 18, left: 14 },
       theme: 'grid'
     }, extraOpts || {}));
+    const pageH = doc.internal.pageSize.getHeight(), pageW = doc.internal.pageSize.getWidth();
     if(footerText){
       const finalY = (doc.lastAutoTable && doc.lastAutoTable.finalY) || 48;
+      let y = finalY + 10;
+      if(y > pageH - 18){ doc.addPage(); y = 20; }
       doc.setFontSize(11);
       doc.setTextColor(20,20,20);
-      doc.text(footerText, 14, finalY + 10);
+      doc.text(footerText, 14, y);
+    }
+    // Page number on every page: "Page 1 of 4"
+    const totalPages = doc.getNumberOfPages();
+    for(let i = 1; i <= totalPages; i++){
+      doc.setPage(i);
+      doc.setFontSize(9);
+      doc.setTextColor(110,120,135);
+      doc.text(`Page ${i} of ${totalPages}`, pageW / 2, pageH - 8, { align: 'center' });
     }
     return doc.output('blob');
   }catch(e){ console.error('PDF build failed', e); return null; }
@@ -2132,7 +2151,17 @@ function expandSizeRange_(token, brand){
     // AGE_BRACKETS_ table. A range like "9/24" crosses out of the 2–16
     // table entirely and isn't a recognised combination in either system,
     // so it's left alone rather than guessed at.
-    if(end <= 16) return springBrand ? walkSpringBrackets_(start, end) : walkAgeBrackets_(start, end);
+    if(end <= 16){
+      if(springBrand){
+        // Spring splits ONLY a full combined range that starts at 2 (2/16 -> 2/6 + 8/16).
+        // A ready-made size like 8/16 or 8/14 is already a single size: keep it exactly as typed.
+        if(start !== 2 || end <= start + 6) return [token];
+        return walkSpringBrackets_(start, end);
+      }
+      // Other brands: only split when the range really begins on a bracket start (2, 6, 9, 15).
+      if(!AGE_BRACKETS_.some(b=>b[0] === start)) return [token];
+      return walkAgeBrackets_(start, end);
+    }
     return [token];
   }
 
@@ -2156,31 +2185,55 @@ function jumpToSizeOnSpace_(el){
 }
 
 
+/* ---------------- MULTI COLOUR ----------------
+   Colour box works like the Size box: several colours can be typed together,
+   separated by space , - / + ; (any of them). Each colour becomes its own set.
+   A two-word colour can be kept as ONE colour by joining it with an underscore
+   (Navy_Purple -> "Navy Purple"). */
+function parseColourList_(raw){
+  const seen = {}, out = [];
+  String(raw == null ? '' : raw).split(/[\s,\-\/+;&|]+/).forEach(tok=>{
+    const c = tok.replace(/_/g, ' ').trim();
+    if(!c) return;
+    const k = normKey_(c);
+    if(seen[k]) return;
+    seen[k] = 1; out.push(c);
+  });
+  return out.length ? out : [''];     // no colour typed = one set without colour
+}
+
 /* ---------------- DUPLICATE DESIGN CHECK ----------------
-   Same customer + same brand + same design number + same colour must never be
-   created twice. (Both colours blank also counts as the same.) A different
-   colour, or a different brand, is allowed. */
-function findSavedDuplicate_(cust, brand, design, colour){
-  const c = normKey_(cust), br = normKey_(brand), d = normKey_(design), col = normKey_(colour);
+   Alert ONLY when everything is exactly the same: same customer + same brand +
+   same design number + same colour + same SIZE. A different size, a different
+   colour or a different brand is allowed. (Both colours blank counts as same.) */
+function findSavedDuplicate_(cust, brand, design, colour, size){
+  const c = normKey_(cust), br = normKey_(brand), d = normKey_(design), col = normKey_(colour), sz = normKey_(size);
   if(!c || !br || !d) return null;
   return bookings.find(b=>!b.trashed &&
     normKey_(b.customerName)===c && normKey_(b.brand)===br &&
-    normKey_(b.designNumber)===d && normKey_(b.colour)===col) || null;
+    normKey_(b.designNumber)===d && normKey_(b.colour)===col && normKey_(b.size)===sz) || null;
 }
-function findCartDuplicate_(design, colour){
-  const d = normKey_(design), col = normKey_(colour);
-  return draftCart.find(x=>normKey_(x.designNumber)===d && normKey_(x.colour)===col) || null;
+function findCartDuplicate_(design, colour, size){
+  const d = normKey_(design), col = normKey_(colour), sz = normKey_(size);
+  return draftCart.find(x=>normKey_(x.designNumber)===d && normKey_(x.colour)===col &&
+    x.sizes.some(s=>normKey_(s.size)===sz)) || null;
 }
-function showDuplicateAlert_(design, colour, savedBooking){
-  let text = `⚠️ ${t('dup_design_alert')}\n\n${design}${colour ? ' · ' + colour : ''}`;
-  if(savedBooking){
-    text += `\n${t('dup_prev_order')}: ${dispatchDateLabel(dispatchDateKey(savedBooking.orderedAt))} (${savedBooking.status==='dispatched' ? t('dispatched') : t('badge_pending')})`;
-  } else {
-    text += `\n${t('dup_in_cart')}`;
-  }
+// dups = [{ colour, size, saved }]  (saved = the earlier order, or null if it is in the current list)
+function showDuplicateList_(design, dups, partial){
+  const lines = dups.map(x=>{
+    const base = `${design}${x.colour ? ' · ' + x.colour : ''} · ${x.size}`;
+    return x.saved
+      ? `${base}  —  ${t('dup_prev_order')}: ${dispatchDateLabel(dispatchDateKey(x.saved.orderedAt))} (${x.saved.status==='dispatched' ? t('dispatched') : t('badge_pending')})`
+      : `${base}  —  ${t('dup_in_cart')}`;
+  });
+  let text = `⚠️ ${t('dup_design_alert')}\n\n${lines.join('\n')}`;
+  if(partial) text += `\n\n${t('dup_skipped_note')}`;
   const msg = document.getElementById('bookMsg');
   if(msg) msg.innerHTML = `<div class="msg err" style="font-weight:700;">${escapeHtml(text).replace(/\n/g,'<br>')}</div>`;
   alert(text);
+}
+function showDuplicateAlert_(design, colour, savedBooking, size){
+  showDuplicateList_(design, [{ colour: colour, size: size || (savedBooking && savedBooking.size) || '', saved: savedBooking }], false);
 }
 
 function addTempSize(){
@@ -2192,7 +2245,8 @@ function addTempSize(){
   const designNo = designInput.value.trim();
   // While Colour/Price are hidden they are ignored, so nothing typed earlier
   // gets silently attached to an order the person can no longer see it on.
-  const colour = colourInput ? colourInput.value.trim() : '';
+  const colourRaw = colourInput ? colourInput.value.trim() : '';
+  const colours = parseColourList_(colourRaw);   // "red blue, green" -> 3 colours, each its own set
   const price = priceInput ? priceInput.value.trim() : '';
   const rawSize = sizeInput.value.trim();
   const qty = parseInt(qtyInput.value) || 0;
@@ -2214,18 +2268,32 @@ function addTempSize(){
     msg.innerHTML = `<div class="msg err">${t('size_qty_err')}</div>`;
     return;
   }
-  // Block a repeat of the same design + colour (same brand, same customer):
-  // either already in this order list, or already ordered earlier.
+  // Every colour x size combination is its own set. Alert only for a combination that
+  // is EXACTLY the same (customer + brand + design + colour + size) as one already in
+  // this order list or ordered earlier; the other combinations still get added.
   const custNow = (document.getElementById('custName') && document.getElementById('custName').value) || draftCustomer || '';
-  if(findCartDuplicate_(designNo, colour)){ showDuplicateAlert_(designNo, colour, null); return; }
-  const savedDup = findSavedDuplicate_(custNow, brandNow, designNo, colour);
-  if(savedDup){ showDuplicateAlert_(designNo, colour, savedDup); return; }
-  let entry = draftCart.find(d=>d.designNumber===designNo && (d.colour||'')===colour);
-  if(!entry){
-    entry = { designNumber: designNo, colour: colour, sizes: [] };
-    draftCart.push(entry);
+  const dups = [], toAdd = [];
+  colours.forEach(col=>{
+    sizes.forEach(size=>{
+      if(toAdd.some(x=>normKey_(x.col)===normKey_(col) && normKey_(x.size)===normKey_(size))) return;
+      if(findCartDuplicate_(designNo, col, size)){ dups.push({ colour: col, size, saved: null }); return; }
+      const savedDup = findSavedDuplicate_(custNow, brandNow, designNo, col, size);
+      if(savedDup){ dups.push({ colour: col, size, saved: savedDup }); return; }
+      toAdd.push({ col, size });
+    });
+  });
+  if(dups.length){
+    showDuplicateList_(designNo, dups, toAdd.length > 0);
+    if(!toAdd.length) return;
   }
-  sizes.forEach(size=>{ entry.sizes.push({ size, qty, price }); });
+  toAdd.forEach(({ col, size })=>{
+    let entry = draftCart.find(d=>d.designNumber===designNo && (d.colour||'')===col);
+    if(!entry){
+      entry = { designNumber: designNo, colour: col, sizes: [] };
+      draftCart.push(entry);
+    }
+    entry.sizes.push({ size, qty, price });
+  });
 
   sizeInput.value = '';
   qtyInput.value = '1';
@@ -2264,8 +2332,10 @@ async function saveOrder(){
   // Final safety check (also covers designs filled in by the AI upload):
   // no design + colour may repeat for this customer + brand.
   for(const d of draftCart){
-    const dup = findSavedDuplicate_(custName, custBrand, d.designNumber, d.colour);
-    if(dup){ showDuplicateAlert_(d.designNumber, d.colour, dup); return; }
+    for(const s of d.sizes){
+      const dup = findSavedDuplicate_(custName, custBrand, d.designNumber, d.colour, s.size);
+      if(dup){ showDuplicateAlert_(d.designNumber, d.colour, dup, s.size); return; }
+    }
   }
 
   isSavingOrder = true;
@@ -2714,8 +2784,11 @@ function printBrandOverview(){
   if(dispatchFromDate || dispatchToDate){
     dateNote = ` | ${dispatchFromDate ? dispatchDateLabel(dispatchFromDate) : '...'} - ${dispatchToDate ? dispatchDateLabel(dispatchToDate) : '...'}`;
   }
+  // Brand name exactly as saved on the orders (e.g. "Spring kids"), if all matches share one spelling
+  const brandNames = [...new Set(matches.map(b=>String(b.brand||'').trim()).filter(Boolean))];
+  const brandLabel = brandNames.length === 1 ? brandNames[0] : bq;
   const blob = buildPdfBlob(
-    `Pending Sets to Order - ${bq}`,
+    `Order to - ${brandLabel}`,
     `Subhash Sales Agencies | ${new Date().toLocaleDateString('en-IN')}${dateNote}`,
     ['Colour','Size','Pending Set'],
     rows,
@@ -2723,7 +2796,7 @@ function printBrandOverview(){
     { styles:{ fontSize:11, cellPadding:3.2 }, columnStyles:{ 2:{ halign:'center', cellWidth:35 } } }
   );
   if(!blob){ alert(t('pdf_gen_fail')); return; }
-  showPdfActions_(blob, `Pending-${bq.replace(/[^a-z0-9]/gi,'_')}.pdf`, `Pending Sets to Order - ${bq}`, `Pending Sets to Order - ${bq} — Total ${total} Set`);
+  showPdfActions_(blob, `Order-to-${brandLabel.replace(/[^a-z0-9]/gi,'_')}.pdf`, `Order to - ${brandLabel}`, `*Order to - ${brandLabel}*`);
 }
 
 function downloadBrandExcel(){
@@ -2799,7 +2872,7 @@ function downloadBrandExcel(){
     ws2['!cols'] = [{wch:14},{wch:16},{wch:12},{wch:16}];
     XLSX.utils.book_append_sheet(wb, ws2, 'Dispatched');
   }
-  XLSX.writeFile(wb, `Pending-${bq.replace(/[^a-z0-9]/gi,'_')}.xlsx`);
+  XLSX.writeFile(wb, `Order-to-${bq.replace(/[^a-z0-9]/gi,'_')}.xlsx`);
 }
 
 let dispatchBrandDebounce_ = null;
@@ -3048,9 +3121,10 @@ function renderPendingOrders(main){
       <input id="pdSearchCustomer" placeholder="${t('enter_customer_name')}" value="${escapeHtml(pdSearchCustomer)}" oninput="onPdSearch('customer', this.value)">
       <label style="margin-top:10px;">${t('by_brand_name')} (${t('optional_word')})</label>
       <input id="pdSearchBrand" list="brandList" placeholder="${t('type_brand_name')}" value="${escapeHtml(pdSearchBrand)}" oninput="onPdSearch('brand', this.value)">
-      <label style="margin-top:10px;">${t('by_date')} (${t('optional_word')})</label>
-      <input id="pdSearchDate" type="date" value="${escapeHtml(pdSearchDate)}" oninput="onPdSearch('date', this.value)">
-      ${pdSearchBrand.trim() && canCurrentUserDelete() ? `<button class="action-btn del" style="width:100%;margin-top:12px;" onclick="deleteAllByBrand()">${t('delete_all_brand')} "${escapeHtml(pdSearchBrand.trim())}"</button>` : ''}
+      <label style="margin-top:10px;">${t('from_date')} (${t('optional_word')})</label>
+      <input id="pdFromDate" type="date" value="${escapeHtml(pdFromDate)}" oninput="onPdSearch('from', this.value)">
+      <label style="margin-top:10px;">${t('to_date')} (${t('optional_word')})</label>
+      <input id="pdToDate" type="date" value="${escapeHtml(pdToDate)}" oninput="onPdSearch('to', this.value)">
     </div>
   `;
 
@@ -3064,8 +3138,8 @@ function renderPendingOrders(main){
     const bq = pdSearchBrand.trim().toLowerCase();
     filtered = filtered.filter(b=>(b.brand||'').toLowerCase().includes(bq));
   }
-  if(pdSearchDate){
-    filtered = filtered.filter(b=>dispatchDateKey(b.orderedAt)===pdSearchDate);
+  if(pdFromDate || pdToDate){
+    filtered = filtered.filter(b=>inPdRange_(b.orderedAt));
   }
 
   let customers = [...new Set(filtered.map(b=>b.customerName))];
@@ -3207,7 +3281,7 @@ function removePendingEditRow(bookingId){
 function addEditNewLine_(){
   if(!editingPendingGroup) return false;
   const val = id => { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
-  const design = val('editNewDesign'), colour = val('editNewColour'), rawSize = val('editNewSize');
+  const design = val('editNewDesign'), colourRaw = val('editNewColour'), rawSize = val('editNewSize');
   const brand = val('editNewBrand'), price = val('editNewPrice');
   const qty = parseInt(val('editNewQty')) || 0;
   const msg = document.getElementById('editNewMsg');
@@ -3218,28 +3292,34 @@ function addEditNewLine_(){
   const tokens = rawSize.split(/[\s,]+/).map(s=>s.trim()).filter(Boolean);
   const sizes = tokens.length === 1 ? expandSizeRange_(tokens[0], brand) : tokens;
   if(!sizes.length){ if(msg) msg.innerHTML = `<div class="msg err">${t('size_qty_err')}</div>`; return false; }
+  const colours = parseColourList_(colourRaw);
 
   const { cname, dk } = editingPendingGroup;
   const groupRows = getPendingDatedRows(cname, dk);
-  const nd = normKey_(design), nc = normKey_(colour), nb = normKey_(brand);
-
-  // Same customer + brand + design + colour already ordered on ANOTHER date -> block (same rule as new orders).
-  // Inside THIS order it's fine: it just means adding one more size to that design.
-  const inThisOrder = groupRows.some(b=>normKey_(b.designNumber)===nd && normKey_(b.colour)===nc && normKey_(b.brand)===nb);
-  if(!inThisOrder && nb){
-    const other = bookings.find(b=>!b.trashed && normKey_(b.customerName)===normKey_(cname) && normKey_(b.brand)===nb &&
-      normKey_(b.designNumber)===nd && normKey_(b.colour)===nc && dispatchDateKey(b.orderedAt)!==dk);
-    if(other){ showDuplicateAlert_(design, colour, other); return false; }
+  const nd = normKey_(design), nb = normKey_(brand);
+  const dups = [], ok = [];
+  colours.forEach(col=>{
+    const nc = normKey_(col);
+    sizes.forEach(size=>{
+      const ns = normKey_(size);
+      if(ok.some(x=>normKey_(x.colour)===nc && normKey_(x.size)===ns)) return;
+      // exactly the same line already in THIS order (or already staged)
+      const inOrder = groupRows.some(b=>normKey_(b.designNumber)===nd && normKey_(b.colour)===nc && normKey_(b.size)===ns && normKey_(b.brand)===nb) ||
+        editNewLines_.some(l=>normKey_(l.design)===nd && normKey_(l.colour)===nc && normKey_(l.size)===ns);
+      if(inOrder){ dups.push({ colour: col, size, saved: null }); return; }
+      // exactly the same line ordered earlier on ANOTHER date
+      const other = nb ? bookings.find(b=>!b.trashed && normKey_(b.customerName)===normKey_(cname) && normKey_(b.brand)===nb &&
+        normKey_(b.designNumber)===nd && normKey_(b.colour)===nc && normKey_(b.size)===ns && dispatchDateKey(b.orderedAt)!==dk) : null;
+      if(other){ dups.push({ colour: col, size, saved: other }); return; }
+      ok.push({ colour: col, size });
+    });
+  });
+  if(dups.length){
+    showDuplicateList_(design, dups, ok.length > 0);
+    if(!ok.length) return false;
   }
-  // Exact same size line already in this order (or already staged) -> don't double it.
-  for(const sz of sizes){
-    const ns = normKey_(sz);
-    const exists = groupRows.some(b=>normKey_(b.designNumber)===nd && normKey_(b.colour)===nc && normKey_(b.size)===ns) ||
-      editNewLines_.some(l=>normKey_(l.design)===nd && normKey_(l.colour)===nc && normKey_(l.size)===ns);
-    if(exists){ alert(`${design}${colour?' · '+colour:''} · ${sz}\n${t('line_exists_err')}`); return false; }
-  }
 
-  sizes.forEach(size=> editNewLines_.push({ design, colour, size, qty, brand, price }));
+  ok.forEach(x=> editNewLines_.push({ design, colour: x.colour, size: x.size, qty, brand, price }));
   ['editNewDesign','editNewColour','editNewSize','editNewPrice'].forEach(id=>{ const el = document.getElementById(id); if(el) el.value = ''; });
   const q = document.getElementById('editNewQty'); if(q) q.value = '1';
   if(msg) msg.innerHTML = '';
@@ -3387,14 +3467,15 @@ function printPendingOrder(cname){
 function onPdSearch(which, val){
   if(which==='customer') pdSearchCustomer = val;
   else if(which==='brand') pdSearchBrand = val;
-  else pdSearchDate = val;
+  else if(which==='from') pdFromDate = val;
+  else pdToDate = val;
   render();
   setTimeout(()=>{
-    const id = which==='customer' ? 'pdSearchCustomer' : which==='brand' ? 'pdSearchBrand' : 'pdSearchDate';
+    const id = which==='customer' ? 'pdSearchCustomer' : which==='brand' ? 'pdSearchBrand' : which==='from' ? 'pdFromDate' : 'pdToDate';
     const el = document.getElementById(id);
     if(!el) return;
     el.focus();
-    if(which!=='date') el.setSelectionRange(el.value.length, el.value.length);
+    if(which==='customer' || which==='brand') el.setSelectionRange(el.value.length, el.value.length);
   }, 0);
 }
 
@@ -3407,8 +3488,8 @@ async function deletePendingOrder(cname){
     const bq = pdSearchBrand.trim().toLowerCase();
     rows = rows.filter(b=>(b.brand||'').toLowerCase().includes(bq));
   }
-  if(pdSearchDate){
-    rows = rows.filter(b=>dispatchDateKey(b.orderedAt)===pdSearchDate);
+  if(pdFromDate || pdToDate){
+    rows = rows.filter(b=>inPdRange_(b.orderedAt));
   }
   let total = 0;
   rows.forEach(b=>{
