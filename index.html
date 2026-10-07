@@ -138,12 +138,6 @@
   .field-sage{ border-left:4px solid var(--sage) !important; background:#F3FAF6 !important; }
   .field-rust{ border-left:4px solid var(--rust) !important; background:#FDF6F3 !important; }
   .field-mustard{ border-left:4px solid var(--mustard) !important; background:#F2F8FF !important; }
-  .hide-toggle{
-    flex:none; border:none; cursor:pointer; color:#fff; font-weight:700; font-size:12px;
-    padding:12px 12px; border-radius:10px; margin-bottom:0;
-    background:linear-gradient(135deg,#e8590c,#c2255c);
-    box-shadow:0 2px 6px rgba(194,37,92,0.35);
-  }
   .label-dot{
     display:inline-block; width:7px; height:7px; border-radius:50%;
     margin-right:6px; vertical-align:middle;
@@ -393,6 +387,7 @@
 <div class="topbar">
   <h1>Subhash Sales Agencies</h1>
   <div class="topbar-right">
+    <button class="lang-toggle" id="shareAppBtn" onclick="openShareApp()" title="Share App">📲</button>
     <button class="lang-toggle" id="notifyToggleBtn" onclick="toggleNotify()" title="Order notifications">🔔</button>
     <button class="lang-toggle" id="langToggleBtn" onclick="toggleLang()">हिं</button>
     <span id="topbarRight"></span>
@@ -431,7 +426,6 @@ let tempDesignNumber = '';
 let tempColour = '';
 let tempSizeText = '';       // what is typed in the Size box (kept after + so the same size can be reused)
 let tempPrice = '';
-let hideColourPrice = false; // Order form: hides the Colour + Price boxes when toggled
 let activitySearchStaff = '';
 let tempSizes = [];          // [{size, qty}]
 
@@ -623,6 +617,10 @@ const I18N = {
     dup_in_cart:'already in this order list', dup_skipped_note:'Only the repeated ones were skipped — the rest were added.', dup_prev_order:'Earlier order', notif_on_msg:'🔔 New-order notifications ON', notif_off_msg:'🔕 New-order notifications OFF',
     add_more_lines:'Add new design / size to this order', add_line_btn:'+ Add', add_line_hint:'Fill and tap + Add (or just Save Changes) — it joins this order.',
     brand_word:'Brand', price_word2:'Price', line_exists_err:'This design + colour + size is already in this order — change its Set count above instead.', saved_ok:'✓ Saved',
+    share_app_title:'Share App with Staff', share_app_wa:'📤 Send on WhatsApp', share_app_other:'🔗 Share via other apps', share_app_copy:'📋 Copy link', share_app_copied:'✓ Link copied',
+    share_app_install:'⬇️ Install on THIS phone', share_app_file_warn:'This copy is opened from a file, not from your website link — upload it to your website first, then share.',
+    share_app_text:'Subhash Sales Agencies — Order & Dispatch app.\n\n1) Open this link in Chrome:\n{URL}\n2) Tap the ⋮ menu → "Install app" (or "Add to Home screen").\n3) Open the app, enter your name and mobile number and send the login request. You can start after the owner approves it.',
+    share_app_steps:'Staff: open the link in Chrome → ⋮ menu → Install app. iPhone: Safari → Share → Add to Home Screen.',
     new_order_title:'New Order', notif_blocked:'Browser notifications are blocked. Please allow notifications for this app in your browser/phone settings. In-app alerts will still show while the app is open.',
 
     search_customer:'Search Customer', type_name:'Type name', search_by_brand:'Search by Brand',
@@ -711,6 +709,10 @@ const I18N = {
     dup_in_cart:'इस ऑर्डर की लिस्ट में पहले से है', dup_skipped_note:'सिर्फ दोहराए गए हटाए गए — बाकी जुड़ गए।', dup_prev_order:'पिछला ऑर्डर', notif_on_msg:'🔔 नए ऑर्डर की सूचना चालू', notif_off_msg:'🔕 नए ऑर्डर की सूचना बंद',
     add_more_lines:'इस ऑर्डर में नया डिज़ाइन / साइज़ जोड़ें', add_line_btn:'+ जोड़ें', add_line_hint:'भरकर + जोड़ें दबाएं (या सीधे बदलाव सेव करें) — यह इसी ऑर्डर में जुड़ जाएगा।',
     brand_word:'ब्रांड', price_word2:'रेट', line_exists_err:'यह डिज़ाइन + कलर + साइज़ इस ऑर्डर में पहले से है — ऊपर उसका सेट बदलें।', saved_ok:'✓ सेव हो गया',
+    share_app_title:'स्टाफ को ऐप भेजें', share_app_wa:'📤 WhatsApp पर भेजें', share_app_other:'🔗 दूसरे ऐप से भेजें', share_app_copy:'📋 लिंक कॉपी करें', share_app_copied:'✓ लिंक कॉपी हो गया',
+    share_app_install:'⬇️ इस फ़ोन में इंस्टॉल करें', share_app_file_warn:'यह कॉपी वेबसाइट लिंक से नहीं, फ़ाइल से खुली है — पहले इसे अपनी वेबसाइट पर अपलोड करें, फिर शेयर करें।',
+    share_app_text:'Subhash Sales Agencies — Order & Dispatch ऐप।\n\n1) यह लिंक Chrome में खोलें:\n{URL}\n2) ⋮ मेन्यू → "Install app" (या "Add to Home screen") दबाएं।\n3) ऐप खोलकर अपना नाम और मोबाइल नंबर डालें और लॉगिन रिक्वेस्ट भेजें। मालिक के अप्रूव करने के बाद आप काम शुरू कर सकते हैं।',
+    share_app_steps:'स्टाफ: लिंक Chrome में खोलें → ⋮ मेन्यू → Install app। iPhone: Safari → Share → Add to Home Screen।',
     new_order_title:'नया ऑर्डर', notif_blocked:'ब्राउज़र की नोटिफिकेशन बंद है। कृपया फ़ोन/ब्राउज़र सेटिंग में इस ऐप की नोटिफिकेशन चालू करें। ऐप खुला होने पर ऐप के अंदर अलर्ट दिखेगा।',
 
     search_customer:'ग्राहक खोजें', type_name:'नाम लिखें', search_by_brand:'ब्रांड से खोजें',
@@ -1515,6 +1517,68 @@ function sendOrderPush_(cust, brand, sets, orderedAt){
   }catch(e){}
 }
 
+
+/* ---------------- SHARE / INSTALL THE APP ----------------
+   The installed app is just this website. Staff get it by opening the website
+   link on their phone and tapping "Install app" — so "sharing the app" means
+   sending that link (WhatsApp / any app / copy). */
+let deferredInstallPrompt_ = null;
+window.addEventListener('beforeinstallprompt', e=>{ e.preventDefault(); deferredInstallPrompt_ = e; });
+window.addEventListener('appinstalled', ()=>{ deferredInstallPrompt_ = null; });
+
+function appShareUrl_(){ return location.href.split('#')[0].split('?')[0]; }
+function appShareText_(){ return t('share_app_text').replace('{URL}', appShareUrl_()); }
+
+function openShareApp(){
+  const old = document.getElementById('shareAppOverlay');
+  if(old) old.remove();
+  const url = appShareUrl_();
+  const isFile = location.protocol === 'file:';
+  const ov = document.createElement('div');
+  ov.id = 'shareAppOverlay';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center;';
+  const btn = (id, bg, fg, label)=>`<button id="${id}" style="width:100%;background:${bg};color:${fg};border:none;border-radius:12px;padding:13px;font-weight:700;font-size:15px;margin-bottom:8px;">${label}</button>`;
+  ov.innerHTML = `
+    <div style="background:#fff;width:100%;max-width:520px;border-radius:18px 18px 0 0;padding:16px 16px 22px;box-shadow:0 -6px 24px rgba(0,0,0,.25);max-height:90vh;overflow:auto;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+        <div style="font-weight:700;font-size:16px;color:#1B2430;">📲 ${t('share_app_title')}</div>
+        <button id="shareAppClose" style="background:none;border:none;font-size:22px;color:#5b6472;">✕</button>
+      </div>
+      <div style="font-size:12.5px;color:#1656A6;background:#EAF1FB;border-radius:10px;padding:8px 10px;margin-bottom:10px;word-break:break-all;">${escapeHtml(url)}</div>
+      ${isFile ? `<div class="msg err" style="margin-bottom:10px;">${t('share_app_file_warn')}</div>` : ''}
+      ${btn('shareAppWa', '#25D366', '#063', t('share_app_wa'))}
+      ${navigator.share ? btn('shareAppOther', '#1656A6', '#fff', t('share_app_other')) : ''}
+      ${btn('shareAppCopy', '#EAF1FB', '#1656A6', t('share_app_copy'))}
+      ${deferredInstallPrompt_ ? btn('shareAppInstall', '#FFC94D', '#1B2430', t('share_app_install')) : ''}
+      <div style="font-size:12px;color:#7e8896;margin-top:4px;">${t('share_app_steps')}</div>
+    </div>`;
+  document.body.appendChild(ov);
+  const close = ()=>ov.remove();
+  ov.addEventListener('click', e=>{ if(e.target === ov) close(); });
+  document.getElementById('shareAppClose').onclick = close;
+  document.getElementById('shareAppWa').onclick = ()=>{
+    window.open('https://wa.me/?text=' + encodeURIComponent(appShareText_()), '_blank');
+  };
+  const other = document.getElementById('shareAppOther');
+  if(other) other.onclick = async ()=>{
+    try{ await navigator.share({ title: 'Subhash Sales Agencies', text: appShareText_() }); }catch(e){}
+  };
+  document.getElementById('shareAppCopy').onclick = async ()=>{
+    const text = appShareText_();
+    try{ await navigator.clipboard.writeText(text); }
+    catch(e){
+      const ta = document.createElement('textarea'); ta.value = text; document.body.appendChild(ta); ta.select();
+      try{ document.execCommand('copy'); }catch(_){} ta.remove();
+    }
+    showInAppToast_(t('share_app_copied'));
+  };
+  const inst = document.getElementById('shareAppInstall');
+  if(inst) inst.onclick = async ()=>{
+    try{ deferredInstallPrompt_.prompt(); await deferredInstallPrompt_.userChoice; }catch(e){}
+    deferredInstallPrompt_ = null; close();
+  };
+}
+
 function renderTopbarRight(){
   const el = document.getElementById('topbarRight');
   if(!currentStaff){ el.innerHTML = ''; return; }
@@ -1827,14 +1891,6 @@ async function revokeStaff(email){
 // Up/Down arrow keys instead of having to click each field by hand —
 // Down moves to the next field, Up moves back to the previous one.
 const ORDER_FORM_FIELD_SEQUENCE = ['custName','custBrand','designNo','sizeVal','qtyVal','designColour','designPrice'];
-function toggleColourPrice(){
-  hideColourPrice = !hideColourPrice;
-  // Hiding wipes whatever was typed in Colour/Price, so after Unhide both
-  // boxes come back blank — for brands that never need them, that means
-  // nothing stale is ever carried over into the next order.
-  if(hideColourPrice){ tempColour = ''; tempPrice = ''; }
-  render();
-}
 function handleOrderFormArrowNav(e, fieldId){
   if(e.key === ' ' && fieldId === 'designNo'){
     // Design numbers never contain spaces — typing one jumps straight to
@@ -1897,14 +1953,10 @@ function renderBook(main){
           <label>${t('set')}</label>
           <input id="qtyVal" type="number" min="1" value="1" onkeydown="if(event.key==='Enter'){event.preventDefault();addTempSize();}else{handleOrderFormArrowNav(event,'qtyVal')}">
         </div>
-        <button class="small btn-inline" onclick="addTempSize()">+</button>
       </div>
       <div style="font-size:12px;color:#7e8896;margin-top:4px;">${t('size_add_hint')}</div>
 
       <div style="display:flex;align-items:flex-end;gap:8px;margin-top:14px;">
-        ${hideColourPrice ? `
-          <button type="button" class="hide-toggle" onclick="toggleColourPrice()">👁 ${t('unhide_word')} ${t('colour_word')} / ${t('price_word')}</button>
-        ` : `
           <div style="flex:1.5;min-width:0;">
             <label>${t('colour_optional')}</label>
             <input id="designColour" placeholder="${t('colour_ph')}" value="${escapeHtml(tempColour)}" oninput="tempColour=this.value" onkeydown="handleOrderFormArrowNav(event,'designColour')">
@@ -1913,8 +1965,7 @@ function renderBook(main){
             <label style="font-size:10px;">${t('price_per_pcs')}</label>
             <input id="designPrice" type="number" inputmode="decimal" min="0" placeholder="₹" value="${escapeHtml(tempPrice)}" oninput="tempPrice=this.value" onkeydown="handleOrderFormArrowNav(event,'designPrice')">
           </div>
-          <button type="button" class="hide-toggle" onclick="toggleColourPrice()">${t('hide_word')}</button>
-        `}
+          <button class="small btn-inline" style="flex:none;width:52px;" onclick="addTempSize()">+</button>
       </div>
     </div>
 
