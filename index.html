@@ -15,8 +15,6 @@
 <meta name="apple-mobile-web-app-title" content="SSA Orders">
 <meta name="mobile-web-app-capable" content="yes">
 
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
@@ -37,7 +35,7 @@
     margin:0;
     background:var(--linen);
     color:var(--ink);
-    font-family:'IBM Plex Sans',sans-serif;
+    font-family:'Times New Roman',Times,serif;
     font-size:16px;
     -webkit-text-size-adjust:100%;
   }
@@ -55,7 +53,7 @@
     box-shadow:0 2px 8px rgba(0,0,0,.15);
   }
   .topbar h1{
-    font-family:'Fraunces',serif;
+    font-family:'Times New Roman',Times,serif;
     font-weight:700;
     font-size:18px;
     margin:0;
@@ -105,7 +103,7 @@
     margin-bottom:14px;
   }
   .card h2{
-    font-family:'Fraunces',serif;
+    font-family:'Times New Roman',Times,serif;
     font-weight:700;
     font-size:18px;
     margin:0 0 12px 0;
@@ -123,7 +121,7 @@
     border:1px solid var(--line);
     border-radius:8px;
     font-size:16px;
-    font-family:'IBM Plex Sans',sans-serif;
+    font-family:'Times New Roman',Times,serif;
     background:#fff;
     color:var(--ink);
   }
@@ -145,7 +143,7 @@
   .row{ display:flex; gap:8px; margin-bottom:10px; align-items:flex-end; }
   .row > *{ flex:1; }
   .row .btn-inline{ flex:none; width:52px; }
-  button{ font-family:'IBM Plex Sans',sans-serif; cursor:pointer; }
+  button{ font-family:'Times New Roman',Times,serif; cursor:pointer; }
   button.primary{
     width:100%;
     background:var(--navy);
@@ -329,7 +327,7 @@
     padding:28px 22px; max-width:380px; width:100%;
   }
   .login-card h2{
-    font-family:'Fraunces',serif; font-weight:700; font-size:22px; margin:0 0 6px 0;
+    font-family:'Times New Roman',Times,serif; font-weight:700; font-size:22px; margin:0 0 6px 0;
     color:var(--navy);
   }
   .login-card p{ font-size:13.5px; color:#5b6472; margin:0 0 18px 0; }
@@ -359,7 +357,7 @@
   .size-suggest-item:active{ background:var(--navy); color:#fff; }
 
   .date-section-label{
-    font-family:'Fraunces',serif; font-weight:700; font-size:15px;
+    font-family:'Times New Roman',Times,serif; font-weight:700; font-size:15px;
     color:var(--navy); margin:18px 0 8px 2px; padding-bottom:4px;
     border-bottom:2px solid var(--line);
   }
@@ -806,6 +804,7 @@ function buildPdfBlob(title, subtitle, columns, rows, footerText, extraOpts){
   try{
     const { jsPDF } = window.jspdf;
     const doc = new jsPDF();
+    doc.setFont('times', 'normal');          // Times New Roman style for every PDF
 
     const pageW = doc.internal.pageSize.getWidth(), pageH = doc.internal.pageSize.getHeight();
     // Letterhead + title boxes (FIRST page only). Returns the Y where the table starts.
@@ -860,15 +859,54 @@ function buildPdfBlob(title, subtitle, columns, rows, footerText, extraOpts){
     return ty + th + 5;
     };
     const tableStart = drawHeader();          // page 1 header
-    doc.autoTable(Object.assign({
-      startY: tableStart,
+
+    // Optional "continued" headings: when one group (e.g. a customer) runs over onto the
+    // next page, a heading row with that group's name is put at the top of that page.
+    const contCfg = extraOpts && extraOpts.continuation;
+    const tableOpts = Object.assign({}, extraOpts || {});
+    delete tableOpts.continuation;
+    const baseOpts = Object.assign({
       head: [columns],
-      body: rows,
-      styles: { fontSize: 9, cellPadding: 3 },
       headStyles: { fillColor: [22,86,166], textColor: [255,255,255] },
       margin: { top: 14, right: 14, bottom: 14, left: 14 },
       theme: 'grid'
-    }, extraOpts || {}));
+    }, tableOpts, {
+      styles: Object.assign({ fontSize: 9, cellPadding: 3 }, tableOpts.styles || {}, { font: 'times' })
+    });
+    let bodyRows = rows;
+    if(contCfg){
+      try{
+        let cur = rows.map((r,i)=>({ row:r, label: contCfg.labels[i], isHead: !!contCfg.isHeading[i], isCont:false }));
+        for(let pass = 0; pass < 8; pass++){
+          // dry run on a scratch document to see which row starts every page
+          const sd = new jsPDF();
+          const firstOnPage = {};
+          sd.autoTable(Object.assign({}, baseOpts, {
+            startY: tableStart,
+            body: cur.map(x=>x.row),
+            didDrawCell: (d)=>{
+              if(d.section === 'body'){
+                const pn = sd.internal.getNumberOfPages();
+                if(!(pn in firstOnPage)) firstOnPage[pn] = d.row.index;
+              }
+            }
+          }));
+          const insertAt = [];
+          Object.keys(firstOnPage).forEach(pn=>{
+            if(Number(pn) === 1) return;
+            const idx = firstOnPage[pn];
+            const it = cur[idx];
+            if(it && !it.isHead && !it.isCont && it.label) insertAt.push(idx);
+          });
+          if(!insertAt.length) break;
+          insertAt.sort((a,b)=>b-a).forEach(idx=>{
+            cur.splice(idx, 0, { row: contCfg.makeRow(cur[idx].label), label: cur[idx].label, isHead:false, isCont:true });
+          });
+        }
+        bodyRows = cur.map(x=>x.row);
+      }catch(e){ console.error('Continued-heading layout skipped', e); bodyRows = rows; }
+    }
+    doc.autoTable(Object.assign({}, baseOpts, { startY: tableStart, body: bodyRows }));
     if(footerText){
       const finalY = (doc.lastAutoTable && doc.lastAutoTable.finalY) || tableStart;
       let y = finalY + 10;
@@ -2866,11 +2904,16 @@ function printBrandOverview(){
     if(!custGroups.length){ alert(t('no_pending_brand')); return; }
     const bn = [...new Set(matches.map(b=>String(b.brand||'').trim()).filter(Boolean))];
     const bl = bn.length === 1 ? bn[0] : bq;
-    const rowsC = []; let totC = 0;
+    const rowsC = [], labelsC = [], headsC = []; let totC = 0;
+    const headStyleC = { fillColor:[222,234,250], textColor:[22,86,166], fontStyle:'bold', fontSize:12 };
     custGroups.forEach(c=>{
       totC += c.total;
-      rowsC.push([{ content: `${c.customer}      (${c.total} Set)`, colSpan: 4, styles: { fillColor:[222,234,250], textColor:[22,86,166], fontStyle:'bold', fontSize:12 } }]);
-      c.lines.forEach(l=> rowsC.push([ l.design, l.colour || '-', l.size, { content: String(l.qty), styles:{ fontStyle:'bold', halign:'center' } } ]));
+      rowsC.push([{ content: `${c.customer}      (${c.total} Set)`, colSpan: 4, styles: headStyleC }]);
+      labelsC.push(c.customer); headsC.push(true);
+      c.lines.forEach(l=>{
+        rowsC.push([ l.design, l.colour || '-', l.size, { content: String(l.qty), styles:{ fontStyle:'bold', halign:'center' } } ]);
+        labelsC.push(c.customer); headsC.push(false);
+      });
     });
     let dateNoteC = '';
     if(dispatchFromDate || dispatchToDate){
@@ -2878,7 +2921,9 @@ function printBrandOverview(){
     }
     const blobC = buildPdfBlob(`Customer-wise Pending - ${bl}`, `Subhash Sales Agencies | ${new Date().toLocaleDateString('en-IN')}${dateNoteC}`,
       ['Article','Colour','Size','Pending Set'], rowsC, `Total Pending: ${totC} Set`,
-      { styles:{ fontSize:11, cellPadding:3.2 }, columnStyles:{ 3:{ halign:'center', cellWidth:35 } } });
+      { styles:{ fontSize:11, cellPadding:3.2 }, columnStyles:{ 3:{ halign:'center', cellWidth:35 } },
+        continuation: { labels: labelsC, isHeading: headsC,
+          makeRow: (label)=>[{ content: `${label}      (continued)`, colSpan: 4, styles: headStyleC }] } });
     if(!blobC){ alert(t('pdf_gen_fail')); return; }
     showPdfActions_(blobC, `Customer-wise-Pending-${bl.replace(/[^a-z0-9]/gi,'_')}.pdf`, `Customer-wise Pending - ${bl}`, `*Customer-wise Pending - ${bl}*`);
     return;
