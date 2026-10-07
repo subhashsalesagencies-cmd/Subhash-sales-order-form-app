@@ -429,6 +429,7 @@ let draftBrand = '';
 let draftCart = [];          // [{designNumber, colour, sizes:[{size, qty}]}]
 let tempDesignNumber = '';
 let tempColour = '';
+let tempSizeText = '';       // what is typed in the Size box (kept after + so the same size can be reused)
 let tempPrice = '';
 let hideColourPrice = false; // Order form: hides the Colour + Price boxes when toggled
 let activitySearchStaff = '';
@@ -1891,7 +1892,7 @@ function renderBook(main){
 
       <label style="margin-top:10px;"><span class="label-dot" style="background:var(--mustard);"></span>${t('size')}</label>
       <div class="row">
-        <input id="sizeVal" class="field-mustard" placeholder="${t('size_ph')}" autocomplete="off" onkeydown="if(event.key==='Enter'){event.preventDefault();addTempSize();}else{handleOrderFormArrowNav(event,'sizeVal')}">
+        <input id="sizeVal" class="field-mustard" placeholder="${t('size_ph')}" autocomplete="off" value="${escapeHtml(tempSizeText)}" oninput="tempSizeText=this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();addTempSize();}else{handleOrderFormArrowNav(event,'sizeVal')}">
         <div style="max-width:80px;">
           <label>${t('set')}</label>
           <input id="qtyVal" type="number" min="1" value="1" onkeydown="if(event.key==='Enter'){event.preventDefault();addTempSize();}else{handleOrderFormArrowNav(event,'qtyVal')}">
@@ -2328,7 +2329,11 @@ function addTempSize(){
     entry.sizes.push({ size, qty, price });
   });
 
-  sizeInput.value = '';
+  // After "+": the Size stays as typed (change it by hand when needed) and the
+  // Colour box is emptied, ready for the next colour.
+  tempSizeText = sizeInput.value;
+  tempColour = '';
+  if(colourInput) colourInput.value = '';
   qtyInput.value = '1';
   msg.innerHTML = '';
   render();
@@ -2417,6 +2422,7 @@ async function saveOrder(){
     draftBrand = '';
     tempDesignNumber = '';
     tempColour = '';
+    tempSizeText = '';
     tempPrice = '';
     tempSizes = [];
     render();
