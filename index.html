@@ -2566,6 +2566,45 @@ function pendingOnlyGroups_(groups){
   })).filter(g=>g.colours.length);
 }
 
+
+// "Only Customer-wise": every customer with ALL of their still-pending lines
+// (design + colour + size + sets). Identical lines of one customer are merged.
+function buildCustomerPendingGroups_(matches){
+  const map = {};
+  matches.forEach(b=>{
+    if(b.status === 'dispatched' || b.trashed) return;
+    const ck = normKey_(b.customerName);
+    const c = map[ck] || (map[ck] = { customer: String(b.customerName||'').trim(), total: 0, lines: {} });
+    const lk = normKey_(b.designNumber) + '|' + normKey_(b.colour) + '|' + normKey_(b.size);
+    const l = c.lines[lk] || (c.lines[lk] = { design: String(b.designNumber).trim(), colour: String(b.colour||'').trim().toUpperCase(), size: String(b.size||'-').trim(), qty: 0 });
+    l.qty += b.qty; c.total += b.qty;
+  });
+  return Object.values(map)
+    .sort((a,b)=> String(a.customer).localeCompare(String(b.customer)))
+    .map(c=>({
+      customer: c.customer, total: c.total,
+      lines: Object.values(c.lines).sort((a,b)=> natCmp_(a.design,b.design) || natCmp_(a.colour,b.colour) || natCmp_(a.size,b.size))
+    }));
+}
+
+function brandActionsCard_(countLine){
+  const sel = v => dispatchBrandView===v ? 'background:var(--navy);color:#fff;' : '';
+  return `
+        <div class="card">
+          <div class="section-label" style="margin-top:0;">${t('brand_overview')}: ${escapeHtml(dispatchBrandQuery.trim())}</div>
+          <div style="font-size:13px;color:#5b6472;margin-bottom:10px;">${countLine}</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+            <button class="secondary" style="${sel('summary')}" onclick="setDispatchBrandView('summary')">Size-wise Total</button>
+            <button class="secondary" style="${sel('detail')}" onclick="setDispatchBrandView('detail')">Customer-wise Detail</button>
+            <button class="secondary" style="${sel('customer')}" onclick="setDispatchBrandView('customer')">Only Customer-wise</button>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            <button class="secondary" onclick="printBrandOverview()">${t('print')} PDF</button>
+            <button class="secondary" onclick="downloadBrandExcel()">Download Excel</button>
+          </div>
+        </div>`;
+}
+
 function renderDispatch(main){
   const activeBookings = bookings.filter(b=>!b.trashed);
   // Include designs that only exist in deleted orders too, so searching an
@@ -2724,6 +2763,18 @@ function renderDispatch(main){
 
     if(!brandMatches.length){
       resultsHtml = `<div class="empty">${t('no_brand_orders')}</div>`;
+    } else if(dispatchBrandView === 'customer'){
+      const custGroups = buildCustomerPendingGroups_(brandMatches);
+      if(!custGroups.length){
+        resultsHtml = `<div class="empty">${t('no_pending_brand')}</div>`;
+      } else {
+        const totAll = custGroups.reduce((s,c)=>s+c.total,0);
+        const custCards = custGroups.map(c=>`<div class="cust-card">
+          <div class="cust-head"><span class="name">${escapeHtml(c.customer)}</span><span><span class="set-pill pending">${c.total} ${t('sets')}</span></span></div>
+          ${c.lines.map(l=>`<div class="item-line"><span>${escapeHtml(l.design)}${l.colour ? ' · ' + escapeHtml(l.colour) : ''} · ${escapeHtml(l.size)}</span><span>${l.qty} ${t('set')}</span></div>`).join('')}
+        </div>`).join('');
+        resultsHtml = brandActionsCard_(`${custGroups.length} ${t('nav_customers')} · ${totAll} ${t('sets')} (${t('badge_pending')})`) + custCards;
+      }
     } else if(!groups.length){
       resultsHtml = `<div class="empty">${t('no_pending_brand')}</div>`;
     } else {
@@ -2762,21 +2813,7 @@ function renderDispatch(main){
         ? `${groups.length} ${t('articles_word')} · ${t('badge_pending')}: ${totPend} · ${t('dispatched')}: ${totDone}`
         : `${groups.length} ${t('articles_word')} · ${totPend} ${t('sets')} (${t('badge_pending')})`;
 
-      resultsHtml = `
-        <div class="card">
-          <div class="section-label" style="margin-top:0;">${t('brand_overview')}: ${escapeHtml(dispatchBrandQuery.trim())}</div>
-          <div style="font-size:13px;color:#5b6472;margin-bottom:10px;">${countLine}</div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
-            <button class="secondary" style="${dispatchBrandView==='summary'?'background:var(--navy);color:#fff;':''}" onclick="setDispatchBrandView('summary')">Size-wise Total</button>
-            <button class="secondary" style="${dispatchBrandView==='detail'?'background:var(--navy);color:#fff;':''}" onclick="setDispatchBrandView('detail')">Customer-wise Detail</button>
-          </div>
-          <div style="display:flex;gap:8px;flex-wrap:wrap;">
-            <button class="secondary" onclick="printBrandOverview()">${t('print')} PDF</button>
-            <button class="secondary" onclick="downloadBrandExcel()">Download Excel</button>
-          </div>
-        </div>
-        ${articleCards}
-      `;
+      resultsHtml = brandActionsCard_(countLine) + articleCards;
     }
   }
 
@@ -2822,6 +2859,30 @@ function printBrandOverview(){
   if(!bq) return;
   const matches = getBrandMatches_();
   if(!matches.length){ alert(t('no_brand_orders')); return; }
+
+  // ONLY CUSTOMER-WISE view -> each customer with all their pending lines.
+  if(dispatchBrandView === 'customer'){
+    const custGroups = buildCustomerPendingGroups_(matches);
+    if(!custGroups.length){ alert(t('no_pending_brand')); return; }
+    const bn = [...new Set(matches.map(b=>String(b.brand||'').trim()).filter(Boolean))];
+    const bl = bn.length === 1 ? bn[0] : bq;
+    const rowsC = []; let totC = 0;
+    custGroups.forEach(c=>{
+      totC += c.total;
+      rowsC.push([{ content: `${c.customer}      (${c.total} Set)`, colSpan: 4, styles: { fillColor:[222,234,250], textColor:[22,86,166], fontStyle:'bold', fontSize:12 } }]);
+      c.lines.forEach(l=> rowsC.push([ l.design, l.colour || '-', l.size, { content: String(l.qty), styles:{ fontStyle:'bold', halign:'center' } } ]));
+    });
+    let dateNoteC = '';
+    if(dispatchFromDate || dispatchToDate){
+      dateNoteC = ` | ${dispatchFromDate ? dispatchDateLabel(dispatchFromDate) : '...'} - ${dispatchToDate ? dispatchDateLabel(dispatchToDate) : '...'}`;
+    }
+    const blobC = buildPdfBlob(`Customer-wise Pending - ${bl}`, `Subhash Sales Agencies | ${new Date().toLocaleDateString('en-IN')}${dateNoteC}`,
+      ['Article','Colour','Size','Pending Set'], rowsC, `Total Pending: ${totC} Set`,
+      { styles:{ fontSize:11, cellPadding:3.2 }, columnStyles:{ 3:{ halign:'center', cellWidth:35 } } });
+    if(!blobC){ alert(t('pdf_gen_fail')); return; }
+    showPdfActions_(blobC, `Customer-wise-Pending-${bl.replace(/[^a-z0-9]/gi,'_')}.pdf`, `Customer-wise Pending - ${bl}`, `*Customer-wise Pending - ${bl}*`);
+    return;
+  }
 
   // CUSTOMER-WISE DETAIL view -> the original customer-wise PDF (each customer's
   // lines, with Pending / Dispatched status), same as before.
@@ -2899,6 +2960,23 @@ function downloadBrandExcel(){
   if(!window.XLSX){ alert(t('pdf_gen_fail')); return; }
   const matches = getBrandMatches_();
   if(!matches.length){ alert(t('no_brand_orders')); return; }
+  // ONLY CUSTOMER-WISE view -> every customer with all their pending lines.
+  if(dispatchBrandView === 'customer'){
+    const custGroups = buildCustomerPendingGroups_(matches);
+    if(!custGroups.length){ alert(t('no_pending_brand')); return; }
+    const cData = [['Customer','Article','Colour','Size','Pending Sets']];
+    let cTot = 0;
+    custGroups.forEach(c=>c.lines.forEach(l=>{ cData.push([c.customer, l.design, l.colour || '-', l.size, l.qty]); cTot += l.qty; }));
+    cData.push([]);
+    cData.push(['TOTAL','','','', cTot]);
+    const wsC = XLSX.utils.aoa_to_sheet(cData);
+    wsC['!cols'] = [{wch:28},{wch:14},{wch:16},{wch:12},{wch:14}];
+    const wbC = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wbC, wsC, 'Customer-wise Pending');
+    XLSX.writeFile(wbC, `Customer-wise-Pending-${bq.replace(/[^a-z0-9]/gi,'_')}.xlsx`);
+    return;
+  }
+
   // CUSTOMER-WISE DETAIL view -> same lines as the customer-wise PDF, with
   // Pending Sets and Dispatched Sets in two separate columns.
   if(dispatchBrandView === 'detail'){
