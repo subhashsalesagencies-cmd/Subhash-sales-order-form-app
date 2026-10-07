@@ -2399,12 +2399,16 @@ function addTempSize(){
 function removeCartSize(designIdx, sizeIdx){
   const d = draftCart[designIdx];
   if(!d) return;
+  if(!confirm('Remove this size from the order?\nAre you sure?')) return;
   d.sizes.splice(sizeIdx,1);
   if(!d.sizes.length) draftCart.splice(designIdx,1);
   render();
 }
 
-function removeCartDesign(idx){ draftCart.splice(idx,1); render(); }
+function removeCartDesign(idx){
+  if(!confirm('Remove this design from the order?\nAre you sure?')) return;
+  draftCart.splice(idx,1); render();
+}
 
 let isSavingOrder = false; // prevents the same order being saved twice if the button is tapped again before the first save finishes
 
@@ -3156,6 +3160,7 @@ async function shareWhatsAppDated(cname, dk){
 
 async function deleteOrderDated(cname, dk){
   if(!canCurrentUserDelete()){ alert(t('delete_not_allowed')); return; }
+  if(!confirm(`Delete this dispatched order of ${cname}?\nAre you sure?`)) return;
   markBusy(t('deleting_word'));
   let total = 0;
   bookings.forEach(b=>{
@@ -3348,7 +3353,10 @@ function refreshEditNewList_(){
   const el = document.getElementById('editNewList');
   if(el) el.innerHTML = editNewListHtml_();
 }
-function removeEditNewLine_(i){ editNewLines_.splice(i,1); refreshEditNewList_(); }
+function removeEditNewLine_(i){
+  if(!confirm('Remove this new line?\nAre you sure?')) return;
+  editNewLines_.splice(i,1); refreshEditNewList_();
+}
 
 function startEditPendingGroup(cname, dk){
   editingPendingGroup = { cname, dk };
@@ -3361,6 +3369,7 @@ function cancelEditPendingGroup(){
   render();
 }
 function removePendingEditRow(bookingId){
+  if(!confirm('Delete this line from the order?\nAre you sure?')) return;
   const row = document.querySelector(`#editDesign-${bookingId}`)?.closest('.item-line');
   if(row) row.dataset.removed = '1';
   if(row) row.style.display = 'none';
@@ -3515,6 +3524,7 @@ async function shareWhatsAppPendingDated(cname, dk){
 
 async function deletePendingOrderDated(cname, dk){
   if(!canCurrentUserDelete()){ alert(t('delete_not_allowed')); return; }
+  if(!confirm(`Delete this pending order of ${cname}?\nAre you sure?`)) return;
   markBusy(t('deleting_word'));
   let total = 0;
   bookings.forEach(b=>{
@@ -3659,6 +3669,7 @@ function printCustomerOrder(cname){
 
 async function deleteCustomerOrderFull(cname){
   if(!canCurrentUserDelete()){ alert(t('delete_not_allowed')); return; }
+  if(!confirm(`Delete ALL orders of ${cname}?\nAre you sure?`)) return;
   markBusy(t('deleting_word'));
   let total = 0;
   bookings.forEach(b=>{
