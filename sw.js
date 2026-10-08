@@ -50,7 +50,7 @@ try {
   console.error('Push setup skipped in service worker', e);
 }
 
-const CACHE_NAME = 'ssa-app-v24';
+const CACHE_NAME = 'ssa-app-v26';
 const APP_SHELL = [
   './',
   './index.html',

@@ -418,6 +418,7 @@ let currentStaff = null; // {name, mobile} - session only, not persisted across 
 
 // in-memory draft for current booking session
 let draftCustomer = '';
+let draftCity = '';
 let draftBrand = '';
 let draftCart = [];          // [{designNumber, colour, sizes:[{size, qty}]}]
 let tempDesignNumber = '';
@@ -578,7 +579,7 @@ const I18N = {
     delete_allowed:'Can Delete Orders', delete_blocked:'Delete Blocked', allow_delete:'Allow Delete', block_delete:'Block Delete',
     delete_not_allowed:"You don't have permission to delete orders. Ask the owner to grant it from the Approvals tab.",
 
-    customer_name:'Customer Name', enter_customer_name:'Enter customer name',
+    customer_name:'Customer Name', enter_customer_name:'Enter customer name', city_name:'City Name (optional)', enter_city_name:'Enter city name',
     brand_name:'Brand Name', enter_brand_name:'Enter brand name',
     add_design:'Add Design', design_number:'Design Number', design_ph:'e.g. 2145',
     colour_optional:'Colour (optional)', colour_ph:'e.g. Red Blue Green',
@@ -670,7 +671,7 @@ const I18N = {
     delete_allowed:'ऑर्डर डिलीट कर सकते हैं', delete_blocked:'डिलीट बंद है', allow_delete:'डिलीट की इजाज़त दें', block_delete:'डिलीट रोकें',
     delete_not_allowed:'आपको ऑर्डर डिलीट करने की इजाज़त नहीं है। मालिक से Approvals टैब से इजाज़त लेने को कहें।',
 
-    customer_name:'ग्राहक का नाम', enter_customer_name:'ग्राहक का नाम लिखें',
+    customer_name:'ग्राहक का नाम', enter_customer_name:'ग्राहक का नाम लिखें', city_name:'शहर का नाम (वैकल्पिक)', enter_city_name:'शहर का नाम लिखें',
     brand_name:'ब्रांड का नाम', enter_brand_name:'ब्रांड का नाम लिखें',
     add_design:'डिज़ाइन जोड़ें', design_number:'डिज़ाइन नंबर', design_ph:'जैसे 2145',
     colour_optional:'कलर (वैकल्पिक)', colour_ph:'जैसे लाल नीला हरा',
@@ -1945,7 +1946,20 @@ async function revokeStaff(email){
 // Lets staff move between the Order form's fields using the keyboard's
 // Up/Down arrow keys instead of having to click each field by hand —
 // Down moves to the next field, Up moves back to the previous one.
-const ORDER_FORM_FIELD_SEQUENCE = ['custName','custBrand','designNo','sizeVal','qtyVal','designColour','designPrice'];
+const ORDER_FORM_FIELD_SEQUENCE = ['custName','custCity','custBrand','designNo','sizeVal','qtyVal','designColour','designPrice'];
+// Customer name as it is stored: "<name> <city>" (the app has always kept the city inside the
+// customer name, e.g. "ARVIND DRESSES MANDSOUR"). If the same customer already exists, its
+// existing spelling is reused so the orders stay under ONE customer.
+function effectiveCustomerName_(){
+  const val = (id, fallback)=>{ const el = document.getElementById(id); return String(el ? el.value : (fallback || '')).trim().replace(/\s+/g,' '); };
+  const name = val('custName', draftCustomer), city = val('custCity', draftCity);
+  if(!name) return '';
+  let full = name;
+  if(city && !normKey_(name).endsWith(normKey_(city))) full = name + ' ' + city;
+  const existing = bookings.find(b=>normKey_(b.customerName) === normKey_(full));
+  return existing ? String(existing.customerName) : full;
+}
+
 function handleOrderFormArrowNav(e, fieldId){
   if(e.key === ' ' && fieldId === 'designNo'){
     // Design numbers never contain spaces — typing one jumps straight to
@@ -1984,6 +1998,8 @@ function renderBook(main){
     <div class="card">
       <h2><span class="label-dot" style="background:var(--navy);"></span>${t('customer_name')}</h2>
       <input id="custName" class="field-navy" list="customerList" placeholder="${t('enter_customer_name')}" value="${escapeHtml(draftCustomer)}" oninput="draftCustomer=this.value" onkeydown="handleOrderFormArrowNav(event,'custName')">
+      <label style="margin-top:10px;"><span class="label-dot" style="background:#7a5aa6;"></span>${t('city_name')}</label>
+      <input id="custCity" placeholder="${t('enter_city_name')}" autocomplete="off" value="${escapeHtml(draftCity)}" oninput="draftCity=this.value" onkeydown="handleOrderFormArrowNav(event,'custCity')">
       <label style="margin-top:10px;"><span class="label-dot" style="background:var(--sage);"></span>${t('brand_name')} *</label>
       <input id="custBrand" class="field-sage" list="brandList" placeholder="${t('enter_brand_name')}" value="${escapeHtml(draftBrand)}" oninput="draftBrand=this.value" onkeydown="handleOrderFormArrowNav(event,'custBrand')">
     </div>
@@ -2411,7 +2427,7 @@ function addTempSize(){
   // Every colour x size combination is its own set. Alert only for a combination that
   // is EXACTLY the same (customer + brand + design + colour + size) as one already in
   // this order list or ordered earlier; the other combinations still get added.
-  const custNow = (document.getElementById('custName') && document.getElementById('custName').value) || draftCustomer || '';
+  const custNow = effectiveCustomerName_();
   const dups = [], toAdd = [];
   colours.forEach(col=>{
     sizes.forEach(size=>{
@@ -2470,7 +2486,8 @@ let isSavingOrder = false; // prevents the same order being saved twice if the b
 async function saveOrder(){
   if(isSavingOrder) return; // a save is already running — ignore the extra tap
 
-  const custName = (document.getElementById('custName').value || '').trim();
+  const custName = effectiveCustomerName_();
+  const custCity = ((document.getElementById('custCity') || {}).value || '').trim();
   const custBrand = (document.getElementById('custBrand').value || '').trim();
   const msg = document.getElementById('bookMsg');
   if(!custName){ msg.innerHTML = `<div class="msg err">${t('enter_customer_err')}</div>`; return; }
@@ -2499,6 +2516,7 @@ async function saveOrder(){
         bookings.push({
           id: uid(),
           customerName: custName,
+          city: custCity,
           brand: custBrand,
           designNumber: d.designNumber,
           colour: d.colour || '',
@@ -2529,6 +2547,7 @@ async function saveOrder(){
 
     draftCart = [];
     draftCustomer = '';
+    draftCity = '';
     draftBrand = '';
     tempDesignNumber = '';
     tempColour = '';
@@ -3827,6 +3846,64 @@ async function deleteCustomerOrderFull(cname){
   render();
 }
 
+
+/* ---------------- EDIT CUSTOMER NAME / CITY ----------------
+   Fixes a wrongly typed customer name (or city). Every order of that customer — pending,
+   dispatched and deleted — moves to the corrected name. If the corrected name is the same
+   as another existing customer, the two are merged into one. */
+function editCustomerName(oldName){
+  const old = document.getElementById('renameCustOverlay');
+  if(old) old.remove();
+  const ov = document.createElement('div');
+  ov.id = 'renameCustOverlay';
+  ov.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center;';
+  ov.innerHTML = `
+    <div style="background:#fff;width:100%;max-width:520px;border-radius:18px 18px 0 0;padding:16px 16px 22px;box-shadow:0 -6px 24px rgba(0,0,0,.25);">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+        <div style="font-weight:700;font-size:16px;color:#1B2430;">✏️ Edit Customer Name</div>
+        <button id="renCustClose" style="background:none;border:none;font-size:22px;color:#5b6472;">✕</button>
+      </div>
+      <div style="font-size:12.5px;color:#5b6472;margin-bottom:8px;">Correct the name / city. All orders of this customer will be updated.</div>
+      <input id="renCustInput" value="${escapeHtml(oldName)}" autocomplete="off" style="margin-bottom:10px;">
+      <div id="renCustMsg"></div>
+      <div style="display:flex;gap:8px;">
+        <button id="renCustCancel" style="flex:1;background:#EAF1FB;color:#1656A6;border:none;border-radius:12px;padding:13px;font-weight:700;font-size:15px;">${t('cancel')}</button>
+        <button id="renCustSave" style="flex:1;background:#1656A6;color:#fff;border:none;border-radius:12px;padding:13px;font-weight:700;font-size:15px;">${t('save_changes')}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  const close = ()=>ov.remove();
+  ov.addEventListener('click', e=>{ if(e.target === ov) close(); });
+  document.getElementById('renCustClose').onclick = close;
+  document.getElementById('renCustCancel').onclick = close;
+  const inp = document.getElementById('renCustInput');
+  inp.focus(); inp.select();
+  const doSave = async ()=>{
+    const btn = document.getElementById('renCustSave');
+    const msg = document.getElementById('renCustMsg');
+    const newRaw = inp.value.trim().replace(/\s+/g,' ');
+    if(!newRaw){ msg.innerHTML = `<div class="msg err">${t('enter_customer_err')}</div>`; return; }
+    if(newRaw === oldName){ close(); return; }
+    // Same name as a DIFFERENT existing customer -> merge into that customer's spelling
+    const other = bookings.find(b=>b.customerName !== oldName && normKey_(b.customerName) === normKey_(newRaw));
+    const finalName = other ? String(other.customerName) : newRaw;
+    if(other && !confirm(`"${finalName}" already exists.\nMerge all orders of "${oldName}" into it?\nAre you sure?`)) return;
+    btn.disabled = true; btn.style.opacity = '0.6'; btn.textContent = '⏳ ' + t('saving_word');
+    await new Promise(r=>setTimeout(r, 30));
+    let n = 0;
+    bookings.forEach(b=>{ if(b.customerName === oldName){ b.customerName = finalName; n++; } });
+    if(expandedCustomer === oldName) expandedCustomer = finalName;
+    editingPendingGroup = null;
+    await saveData();
+    await logActivity('Customer Renamed', `${oldName} → ${finalName} (${n} lines)`);
+    close();
+    render();
+    showInAppToast_(t('saved_ok'));
+  };
+  document.getElementById('renCustSave').onclick = doSave;
+  inp.addEventListener('keydown', e=>{ if(e.key === 'Enter'){ e.preventDefault(); doSave(); } });
+}
+
 function renderCustomers(main){
   const activeBookings = bookings.filter(b=>!b.trashed);
   let customers = [...new Set(activeBookings.map(b=>b.customerName))]
@@ -3889,6 +3966,7 @@ function renderCustomers(main){
       <div class="action-row" onclick="event.stopPropagation();">
         <button class="action-btn wa" onclick="shareWhatsAppCustomer('${cname.replace(/'/g,"\\'")}')">${t('whatsapp')}</button>
         <button class="action-btn pr" onclick="printCustomerOrder('${cname.replace(/'/g,"\\'")}')">${t('print')}</button>
+        <button class="action-btn pr" style="background:#fff;color:var(--navy);border:1.5px solid var(--navy);" onclick="editCustomerName('${cname.replace(/'/g,"\\'")}')">✏️ ${t('edit_btn')}</button>
         ${canCurrentUserDelete() ? `<button class="action-btn del" onclick="deleteCustomerOrderFull('${cname.replace(/'/g,"\\'")}')">${t('delete_btn')}</button>` : ''}
       </div>
       ${detail}
