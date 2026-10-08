@@ -434,6 +434,7 @@ const SIZE_PRESETS = ['20/24','26/30','32/36','18/22','24/28','30/34','9/24','2/
 
 let dispatchQuery = '';
 let dispatchBrandQuery = '';
+let dispatchCustomerQuery = ''; // optional customer-name filter in the Article tab
 let dispatchBrandView = 'summary';  // 'summary' = size-wise totals, 'detail' = per-customer lines
 let dispatchFromDate = ''; // yyyy-mm-dd
 let dispatchToDate = '';   // yyyy-mm-dd
@@ -454,6 +455,12 @@ let editingPendingGroup = null; // { cname, dk } — which Pending-tab group is 
 let pdSearchBrand = '';
 let pdFromDate = ''; // yyyy-mm-dd
 let pdToDate = '';   // yyyy-mm-dd
+// Row passes the brand text currently typed in the Pending tab (if any) — used so
+// Print / WhatsApp / Dispatch / Delete act on exactly what is shown on screen.
+function pdBrandOk_(b){
+  const bq = pdSearchBrand.trim().toLowerCase();
+  return !bq || (b.brand||'').toLowerCase().includes(bq);
+}
 function inPdRange_(orderedAt){
   const k = dispatchDateKey(orderedAt);
   if(pdFromDate && k < pdFromDate) return false;
@@ -607,7 +614,7 @@ const I18N = {
     no_colour_brand:'No Colour / Brand', optional_word:'optional', brand_ph_optional:'e.g. Hello Kids (leave blank to search all brands)',
 
     search_dispatched:'Search Dispatched Orders', by_article_number:'By Article Number',
-    by_brand_name:'By Brand Name', by_date:'By Date', no_dispatched_orders:'No dispatched orders',
+    by_brand_name:'By Brand Name', by_customer_name:'By Customer Name', cust_ph_optional:'Enter customer name (optional)', by_date:'By Date', no_dispatched_orders:'No dispatched orders',
     no_dispatched_match:'match your search', no_dispatched_yet:'yet', total:'Total',
     whatsapp:'WhatsApp', print:'Print', delete_btn:'Delete', undo:'Undo',
     from_date:'From Date', to_date:'To Date', brand_overview:'Brand Overview', articles_word:'articles',
@@ -699,7 +706,7 @@ const I18N = {
     no_colour_brand:'कोई कलर / ब्रांड नहीं', optional_word:'वैकल्पिक', brand_ph_optional:'जैसे Hello Kids (सभी ब्रांड देखने के लिए खाली छोड़ें)',
 
     search_dispatched:'डिस्पैच ऑर्डर खोजें', by_article_number:'आर्टिकल नंबर से',
-    by_brand_name:'ब्रांड नाम से', by_date:'तारीख से', no_dispatched_orders:'कोई डिस्पैच ऑर्डर नहीं मिला',
+    by_brand_name:'ब्रांड नाम से', by_customer_name:'ग्राहक के नाम से', cust_ph_optional:'ग्राहक का नाम लिखें (वैकल्पिक)', by_date:'तारीख से', no_dispatched_orders:'कोई डिस्पैच ऑर्डर नहीं मिला',
     no_dispatched_match:'आपकी खोज से मेल नहीं खाता', no_dispatched_yet:'अभी तक', total:'कुल',
     whatsapp:'व्हाट्सएप', print:'प्रिंट', delete_btn:'डिलीट', undo:'वापस करें',
     from_date:'शुरू तारीख', to_date:'आखिरी तारीख', brand_overview:'ब्रांड की पूरी सूची', articles_word:'आर्टिकल',
@@ -2602,8 +2609,12 @@ function natCmp_(a,b){ return String(a==null?'':a).localeCompare(String(b==null?
 // Active (not deleted) orders of the brand typed in the Article tab, inside the date range.
 function getBrandMatches_(){
   const bql = dispatchBrandQuery.trim().toLowerCase();
-  if(!bql) return [];
-  return bookings.filter(b=>!b.trashed && (b.brand||'').toLowerCase().includes(bql) && inDispatchDateRange(b.orderedAt));
+  const cql = dispatchCustomerQuery.trim().toLowerCase();
+  if(!bql && !cql) return [];
+  return bookings.filter(b=>!b.trashed
+    && (!bql || (b.brand||'').toLowerCase().includes(bql))
+    && (!cql || (b.customerName||'').toLowerCase().includes(cql))
+    && inDispatchDateRange(b.orderedAt));
 }
 
 // Groups orders as Article > Colour > Size. Colour and size are compared
@@ -2665,7 +2676,7 @@ function brandActionsCard_(countLine){
   const sel = v => dispatchBrandView===v ? 'background:var(--navy);color:#fff;' : '';
   return `
         <div class="card">
-          <div class="section-label" style="margin-top:0;">${t('brand_overview')}: ${escapeHtml(dispatchBrandQuery.trim())}</div>
+          <div class="section-label" style="margin-top:0;">${t('brand_overview')}: ${[dispatchBrandQuery.trim(), dispatchCustomerQuery.trim()].filter(Boolean).map(escapeHtml).join(' · ')}</div>
           <div style="font-size:13px;color:#5b6472;margin-bottom:10px;">${countLine}</div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
             <button class="secondary" style="${sel('summary')}" onclick="setDispatchBrandView('summary')">Size-wise Total</button>
@@ -2689,6 +2700,8 @@ function renderDispatch(main){
   let exactDesign = null;
   const hasArticleQuery = !!dispatchQuery.trim();
   const hasBrandQuery = !!dispatchBrandQuery.trim();
+  const hasCustQuery = !!dispatchCustomerQuery.trim();
+  const custQl = dispatchCustomerQuery.trim().toLowerCase();
 
   if(selectedDesign){
     // A design was explicitly picked from the selection list (or matched itself
@@ -2715,6 +2728,9 @@ function renderDispatch(main){
     if(hasBrandQuery){
       const bq = dispatchBrandQuery.trim().toLowerCase();
       matches = matches.filter(b=>(b.brand||'').toLowerCase().includes(bq));
+    }
+    if(hasCustQuery){
+      matches = matches.filter(b=>(b.customerName||'').toLowerCase().includes(custQl));
     }
     const pendingQty = matches.filter(b=>b.status==='pending').reduce((s,b)=>s+b.qty,0);
     const doneQty = matches.filter(b=>b.status==='dispatched').reduce((s,b)=>s+b.qty,0);
@@ -2770,7 +2786,8 @@ function renderDispatch(main){
     // customer also has a separate active order for this article on a
     // different date — the deleted one still appears as its own blurred card.
     const trashedMatches = bookings.filter(b=>b.trashed && b.designNumber===exactDesign &&
-      (!hasBrandQuery || (b.brand||'').toLowerCase().includes(dispatchBrandQuery.trim().toLowerCase())));
+      (!hasBrandQuery || (b.brand||'').toLowerCase().includes(dispatchBrandQuery.trim().toLowerCase())) &&
+      (!hasCustQuery || (b.customerName||'').toLowerCase().includes(custQl)));
     const trashedCustomerNames = [...new Set(trashedMatches.map(b=>b.customerName))];
     const trashedCardsHtml = trashedCustomerNames.map(cname=>{
       const rows = trashedMatches.filter(b=>b.customerName===cname);
@@ -2824,7 +2841,7 @@ function renderDispatch(main){
       ${noActiveMsg}
       ${trashedCardsHtml}
     `;
-  } else if(!hasArticleQuery && hasBrandQuery){
+  } else if(!hasArticleQuery && (hasBrandQuery || hasCustQuery)){
     // Brand overview. "Size-wise Total" shows ONLY what is still pending
     // (dispatched sets are already subtracted), with same colour / same size
     // from different customers merged into one combined total.
@@ -2895,6 +2912,8 @@ function renderDispatch(main){
     <div class="card">
       <h2>${t('search_by_article')}</h2>
       <input id="dispatchSearch" list="designList" placeholder="${t('article_ph')}" value="${escapeHtml(dispatchQuery)}" oninput="onDispatchSearch(this.value)" autofocus>
+      <label style="margin-top:10px;">${t('by_customer_name')} (${t('optional_word')})</label>
+      <input id="dispatchCustomerSearch" list="customerList" placeholder="${t('cust_ph_optional')}" value="${escapeHtml(dispatchCustomerQuery)}" oninput="onDispatchCustomerSearch(this.value)">
       <label style="margin-top:10px;">${t('by_brand_name')} (${t('optional_word')})</label>
       <input id="dispatchBrandSearch" list="brandList" placeholder="${t('brand_ph_optional')}" value="${escapeHtml(dispatchBrandQuery)}" oninput="onDispatchBrandSearch(this.value)">
       <label style="margin-top:10px;">${t('from_date')} (${t('optional_word')})</label>
@@ -2929,13 +2948,19 @@ function onDispatchDateRange(which, val){
 }
 
 function printBrandOverview(){
-  const bq = dispatchBrandQuery.trim();
+  const bq = dispatchBrandQuery.trim() || dispatchCustomerQuery.trim();
   if(!bq) return;
   const matches = getBrandMatches_();
   if(!matches.length){ alert(t('no_brand_orders')); return; }
 
   const brandNames = [...new Set(matches.map(b=>String(b.brand||'').trim()).filter(Boolean))];
-  const brandLabel = brandNames.length === 1 ? brandNames[0] : bq;
+  const brandLabel0 = brandNames.length === 1 ? brandNames[0] : (dispatchBrandQuery.trim() || 'All Brands');
+  // When a customer name is typed too, the PDF title carries it as well, so the
+  // printed / WhatsApp report clearly shows whose order it is.
+  const custNamesPrint = [...new Set(matches.map(b=>String(b.customerName||'').trim()))];
+  const brandLabel = dispatchCustomerQuery.trim()
+    ? ((custNamesPrint.length === 1 ? custNamesPrint[0] : dispatchCustomerQuery.trim()) + ' - ' + brandLabel0)
+    : brandLabel0;
   const todayTxt = new Date().toLocaleDateString('en-IN');
 
   // ONLY CUSTOMER-WISE view -> each customer with all their pending lines.
@@ -3038,7 +3063,7 @@ function printBrandOverview(){
 }
 
 function downloadBrandExcel(){
-  const bq = dispatchBrandQuery.trim();
+  const bq = dispatchBrandQuery.trim() || dispatchCustomerQuery.trim();
   if(!bq) return;
   if(!window.XLSX){ alert(t('pdf_gen_fail')); return; }
   const matches = getBrandMatches_();
@@ -3130,6 +3155,13 @@ function downloadBrandExcel(){
   XLSX.writeFile(wb, `Order-to-${bq.replace(/[^a-z0-9]/gi,'_')}.xlsx`);
 }
 
+let dispatchCustomerDebounce_ = null;
+function onDispatchCustomerSearch(val){
+  dispatchCustomerQuery = val;
+  clearTimeout(dispatchCustomerDebounce_);
+  dispatchCustomerDebounce_ = setTimeout(refreshDispatchResultsOnly_, 120);
+}
+
 let dispatchBrandDebounce_ = null;
 function onDispatchBrandSearch(val){
   dispatchBrandQuery = val;
@@ -3178,7 +3210,7 @@ async function dispatchOne(bookingId){
 async function dispatchGroupDated(cname, dk){
   const now = new Date().toISOString();
   const dispatchedBy = currentStaff ? { name: currentStaff.name, mobile: currentStaff.mobile } : null;
-  const rows = bookings.filter(b=>b.customerName===cname && b.status==='pending' && !b.trashed && dispatchDateKey(b.orderedAt)===dk);
+  const rows = bookings.filter(b=>b.customerName===cname && b.status==='pending' && !b.trashed && dispatchDateKey(b.orderedAt)===dk && pdBrandOk_(b));
   if(!rows.length) return;
   let total = 0;
   rows.forEach(b=>{
@@ -3291,8 +3323,16 @@ function onDoSearch(which, val){
   }, 0);
 }
 
+// Row passes the Article-number / Brand text typed in the Dispatched tab (if any).
+function doRowOk_(b){
+  const dq = doSearchDesign.trim().toLowerCase();
+  const bq = doSearchBrand.trim().toLowerCase();
+  if(dq && !String(b.designNumber||'').toLowerCase().includes(dq)) return false;
+  if(bq && !(b.brand||'').toLowerCase().includes(bq)) return false;
+  return true;
+}
 function getDatedRows(cname, dk){
-  return bookings.filter(b=>b.customerName===cname && b.status==='dispatched' && !b.trashed && dispatchDateKey(b.dispatchedAt)===dk)
+  return bookings.filter(b=>b.customerName===cname && b.status==='dispatched' && !b.trashed && dispatchDateKey(b.dispatchedAt)===dk && doRowOk_(b))
     .sort((a,b)=>(a.designNumber).localeCompare(b.designNumber));
 }
 
@@ -3325,7 +3365,7 @@ async function deleteOrderDated(cname, dk){
   markBusy(t('deleting_word'));
   let total = 0;
   bookings.forEach(b=>{
-    if(b.customerName===cname && b.status==='dispatched' && !b.trashed && dispatchDateKey(b.dispatchedAt)===dk){
+    if(b.customerName===cname && b.status==='dispatched' && !b.trashed && dispatchDateKey(b.dispatchedAt)===dk && doRowOk_(b)){
       b.trashed = true;
       b.trashedAt = new Date().toISOString();
       b.trashedBy = currentStaff ? { name: currentStaff.name, mobile: currentStaff.mobile } : null;
@@ -3656,7 +3696,7 @@ async function saveEditPendingGroup(cname, dk, btn){
 }
 
 function getPendingDatedRows(cname, dk){
-  return bookings.filter(b=>b.customerName===cname && b.status==='pending' && !b.trashed && dispatchDateKey(b.orderedAt)===dk)
+  return bookings.filter(b=>b.customerName===cname && b.status==='pending' && !b.trashed && dispatchDateKey(b.orderedAt)===dk && pdBrandOk_(b))
     .sort((a,b)=>(a.designNumber).localeCompare(b.designNumber));
 }
 
@@ -3689,7 +3729,7 @@ async function deletePendingOrderDated(cname, dk){
   markBusy(t('deleting_word'));
   let total = 0;
   bookings.forEach(b=>{
-    if(b.customerName===cname && b.status==='pending' && !b.trashed && dispatchDateKey(b.orderedAt)===dk){
+    if(b.customerName===cname && b.status==='pending' && !b.trashed && dispatchDateKey(b.orderedAt)===dk && pdBrandOk_(b)){
       b.trashed = true;
       b.trashedAt = new Date().toISOString();
       b.trashedBy = currentStaff ? { name: currentStaff.name, mobile: currentStaff.mobile } : null;
@@ -3702,7 +3742,7 @@ async function deletePendingOrderDated(cname, dk){
 }
 
 function buildPendingOrderPdf(cname){
-  const rows = bookings.filter(b=>b.customerName===cname && b.status==='pending' && !b.trashed)
+  const rows = bookings.filter(b=>b.customerName===cname && b.status==='pending' && !b.trashed && pdBrandOk_(b) && ((!pdFromDate && !pdToDate) || inPdRange_(b.orderedAt)))
     .sort((a,b)=>(a.designNumber).localeCompare(b.designNumber));
   const total = rows.reduce((s,b)=>s+b.qty,0);
   const tableRows = rows.map(b=>[b.designNumber, b.colour||'-', b.size, b.brand||'-', String(b.qty)]);
@@ -3791,11 +3831,23 @@ async function deleteAllByBrand(){
 
 /* ---------------- CUSTOMER-WISE TAB ---------------- */
 
+// Row passes the Brand / Date filters typed in the Customers tab (if any), so the
+// card, its totals, Print, WhatsApp and Delete all use exactly the same rows.
+function custRowOk_(b){
+  const bq = customerBrandFilter.trim().toLowerCase();
+  if(bq && !(b.brand||'').toLowerCase().includes(bq)) return false;
+  if(customerDateFilter){
+    const od = dispatchDateKey(b.orderedAt)===customerDateFilter;
+    const dd = b.dispatchedAt && dispatchDateKey(b.dispatchedAt)===customerDateFilter;
+    if(!od && !dd) return false;
+  }
+  return true;
+}
 function buildCustomerOrderPdf(cname){
   // Grouped by date first (oldest at top, going down to the most recent),
   // so every line from the same date sits together as one block, instead
   // of dates being mixed together by design number.
-  const rows = bookings.filter(b=>b.customerName===cname && !b.trashed)
+  const rows = bookings.filter(b=>b.customerName===cname && !b.trashed && custRowOk_(b))
     .sort((a,b)=> dispatchDateKey(a.orderedAt).localeCompare(dispatchDateKey(b.orderedAt)) || (a.designNumber).localeCompare(b.designNumber));
   let pendTot = 0, doneTot = 0;
   // Includes the order date per line — this list spans every order a
@@ -3830,11 +3882,12 @@ function printCustomerOrder(cname){
 
 async function deleteCustomerOrderFull(cname){
   if(!canCurrentUserDelete()){ alert(t('delete_not_allowed')); return; }
-  if(!confirm(`Delete ALL orders of ${cname}?\nAre you sure?`)) return;
+  const filtered_ = !!(customerBrandFilter.trim() || customerDateFilter);
+  if(!confirm(filtered_ ? `Delete the orders of ${cname} shown for this filter?\nAre you sure?` : `Delete ALL orders of ${cname}?\nAre you sure?`)) return;
   markBusy(t('deleting_word'));
   let total = 0;
   bookings.forEach(b=>{
-    if(b.customerName===cname && !b.trashed){
+    if(b.customerName===cname && !b.trashed && custRowOk_(b)){
       b.trashed = true;
       b.trashedAt = new Date().toISOString();
       b.trashedBy = currentStaff ? { name: currentStaff.name, mobile: currentStaff.mobile } : null;
@@ -3909,22 +3962,9 @@ function renderCustomers(main){
   let customers = [...new Set(activeBookings.map(b=>b.customerName))]
     .filter(c=>c.toLowerCase().includes(customerFilter.trim().toLowerCase()));
 
-  if(customerBrandFilter.trim()){
-    const bq = customerBrandFilter.trim().toLowerCase();
-    const namesWithBrand = new Set(
-      activeBookings.filter(b=>(b.brand||'').toLowerCase().includes(bq)).map(b=>b.customerName)
-    );
-    customers = customers.filter(c=>namesWithBrand.has(c));
-  }
-
-  if(customerDateFilter){
-    const namesOnDate = new Set(
-      activeBookings.filter(b=>
-        dispatchDateKey(b.orderedAt)===customerDateFilter ||
-        (b.dispatchedAt && dispatchDateKey(b.dispatchedAt)===customerDateFilter)
-      ).map(b=>b.customerName)
-    );
-    customers = customers.filter(c=>namesOnDate.has(c));
+  // Only customers who have at least one order matching the Brand AND Date filters together.
+  if(customerBrandFilter.trim() || customerDateFilter){
+    customers = customers.filter(c=>activeBookings.some(b=>b.customerName===c && custRowOk_(b)));
   }
 
   if(!activeBookings.length){
@@ -3933,7 +3973,7 @@ function renderCustomers(main){
   }
 
   const cards = customers.map(cname=>{
-    const rows = activeBookings.filter(b=>b.customerName===cname);
+    const rows = activeBookings.filter(b=>b.customerName===cname && custRowOk_(b));
     const total = rows.reduce((s,b)=>s+b.qty,0);
     const done = rows.filter(b=>b.status==='dispatched').reduce((s,b)=>s+b.qty,0);
     const pending = total - done;
