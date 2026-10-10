@@ -885,9 +885,11 @@ function buildPdfBlob(title, subtitle, columns, rows, footerText, extraOpts){
     // Optional "continued" headings: when one group (e.g. a customer) runs over onto the
     // next page, a heading row with that group's name is put at the top of that page.
     const contCfg = extraOpts && extraOpts.continuation;
+    const repeatCfg = extraOpts && extraOpts.repeatLabel;
     const tableOpts = Object.assign({}, extraOpts || {});
     delete tableOpts.continuation;
     delete tableOpts.heading;
+    delete tableOpts.repeatLabel;
     const baseOpts = Object.assign({
       head: [columns],
       headStyles: { fillColor: [22,86,166], textColor: [255,255,255] },
@@ -930,6 +932,31 @@ function buildPdfBlob(title, subtitle, columns, rows, footerText, extraOpts){
         }
         bodyRows = cur.map(x=>x.row);
       }catch(e){ console.error('Continued-heading layout skipped', e); bodyRows = rows; }
+    }
+    // "=" rows that land at the TOP of a new page get the article number written out again.
+    if(repeatCfg){
+      try{
+        const sd = new jsPDF();
+        const firstOnPage = {};
+        sd.autoTable(Object.assign({}, baseOpts, {
+          startY: tableStart,
+          body: bodyRows,
+          didDrawCell: (d)=>{
+            if(d.section === 'body'){
+              const pn = sd.internal.getNumberOfPages();
+              if(!(pn in firstOnPage)) firstOnPage[pn] = d.row.index;
+            }
+          }
+        }));
+        Object.keys(firstOnPage).forEach(pn=>{
+          if(Number(pn) === 1) return;
+          const i = firstOnPage[pn];
+          if(!repeatCfg.isFirst[i] && bodyRows[i] && bodyRows[i][repeatCfg.col]){
+            const cell = bodyRows[i][repeatCfg.col];
+            bodyRows[i][repeatCfg.col] = Object.assign({}, cell, { content: repeatCfg.articles[i], styles: Object.assign({}, cell.styles, { fontStyle:'bold', halign:'left' }) });
+          }
+        });
+      }catch(e){ console.error('Repeat article label skipped', e); }
     }
     doc.autoTable(Object.assign({}, baseOpts, { startY: tableStart, body: bodyRows }));
     if(footerText){
@@ -3030,19 +3057,26 @@ function printBrandOverview(){
   const groups = pendingOnlyGroups_(buildBrandGroups_(matches));
   if(!groups.length){ alert(t('no_pending_brand')); return; }
 
-  const rows = [];
-  let total = 0;
+  // Table: Article | Colour | Size | Pending Set ("N Set").
+  // The article number is written once on its first row; the rows below it show "=" (same
+  // article) until that article's rows end. A row that starts a new page shows the number again.
+  const rows = [], rowArticle = [], rowFirst = [];
+  let total = 0, artIdx = 0;
   groups.forEach(g=>{
-    let gTotal = 0;
-    g.colours.forEach(c=>c.sizes.forEach(s=>{ gTotal += s.pending; }));
-    total += gTotal;
-    rows.push([{ content: `Article: ${g.design}      (${gTotal} Set)`, colSpan: 3,
-      styles: { fillColor:[222,234,250], textColor:[22,86,166], fontStyle:'bold', fontSize:12 } }]);
-    g.colours.forEach(c=>{
-      c.sizes.forEach(s=>{
-        rows.push([ c.colour || '-', s.size, { content: String(s.pending), styles:{ fontStyle:'bold', halign:'center' } } ]);
-      });
-    });
+    const light = (artIdx++ % 2 === 1);                  // alternate articles get a light tint
+    let first = true;
+    g.colours.forEach(c=>c.sizes.forEach(s=>{
+      total += s.pending;
+      const fill = light ? { fillColor:[238,243,251] } : {};
+      rows.push([
+        { content: first ? g.design : '=', styles: Object.assign({ fontStyle: first ? 'bold' : 'normal', halign: first ? 'left' : 'center' }, fill) },
+        { content: c.colour || '-', styles: fill },
+        { content: s.size, styles: fill },
+        { content: `${s.pending} Set`, styles: Object.assign({ fontStyle:'bold', halign:'center' }, fill) }
+      ]);
+      rowArticle.push(g.design); rowFirst.push(first);
+      first = false;
+    }));
   });
 
   let dateNote = '';
@@ -3053,10 +3087,11 @@ function printBrandOverview(){
   const blob = buildPdfBlob(
     `Order to - ${brandLabel}`,
     `Subhash Sales Agencies | ${new Date().toLocaleDateString('en-IN')}${dateNote}`,
-    ['Colour','Size','Pending Set'],
+    ['Article','Colour','Size','Pending Set'],
     rows,
     `Total Pending: ${total} Set`,
-    { styles:{ fontSize:11, cellPadding:3.2 }, columnStyles:{ 2:{ halign:'center', cellWidth:35 } }, heading: 'Size Set-wise Details' }
+    { styles:{ fontSize:11, cellPadding:3.2 }, columnStyles:{ 0:{ cellWidth:42 }, 3:{ halign:'center', cellWidth:35 } }, heading: 'Size Set-wise Details',
+      repeatLabel: { articles: rowArticle, isFirst: rowFirst, col: 0 } }
   );
   if(!blob){ alert(t('pdf_gen_fail')); return; }
   showPdfActions_(blob, `Order-to-${brandLabel.replace(/[^a-z0-9]/gi,'_')}.pdf`, `Order to - ${brandLabel}`, `*Order to - ${brandLabel}*`);
@@ -3425,7 +3460,7 @@ function renderPendingOrders(main){
   `;
 
   if(!pendingAll.length){
-    main.innerHTML = searchBar + `<div class="empty">${t('no_pending_orders')}</div>`;
+    main.innerHTML = searchBar + `<div id="pdResults"><div class="empty">${t('no_pending_orders')}</div></div>`;
     return;
   }
 
@@ -3445,7 +3480,7 @@ function renderPendingOrders(main){
   }
 
   if(!customers.length){
-    main.innerHTML = searchBar + `<div class="empty">${t('no_customer_found')}</div>`;
+    main.innerHTML = searchBar + `<div id="pdResults"><div class="empty">${t('no_customer_found')}</div></div>`;
     return;
   }
 
@@ -3541,7 +3576,7 @@ function renderPendingOrders(main){
     return `<div class="date-section-label">${dispatchDateLabel(dk)}</div>${custCards}`;
   }).join('');
 
-  main.innerHTML = searchBar + cards;
+  main.innerHTML = searchBar + `<div id="pdResults">${cards}</div>`;
 }
 
 let editNewLines_ = [];      // lines staged in the Pending-edit card, added to the order on Save
@@ -3770,14 +3805,14 @@ function onPdSearch(which, val){
   else if(which==='brand') pdSearchBrand = val;
   else if(which==='from') pdFromDate = val;
   else pdToDate = val;
-  render();
-  setTimeout(()=>{
-    const id = which==='customer' ? 'pdSearchCustomer' : which==='brand' ? 'pdSearchBrand' : which==='from' ? 'pdFromDate' : 'pdToDate';
-    const el = document.getElementById(id);
-    if(!el) return;
-    el.focus();
-    if(which==='customer' || which==='brand') el.setSelectionRange(el.value.length, el.value.length);
-  }, 0);
+  // Only the results list is redrawn. The search boxes are left alone, so the phone keyboard
+  // no longer closes and reopens (jumps up/down) after every letter typed.
+  const live = document.getElementById('pdResults');
+  if(!live){ render(); return; }
+  const tmp = document.createElement('div');
+  renderPendingOrders(tmp);
+  const fresh = tmp.querySelector('#pdResults');
+  if(fresh) live.innerHTML = fresh.innerHTML; else render();
 }
 
 async function deletePendingOrder(cname){
