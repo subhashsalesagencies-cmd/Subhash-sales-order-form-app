@@ -4094,12 +4094,11 @@ function renderCustomers(main){
 function pendingBlockHtml_(cname, pendingRows){
   const cq = cname.replace(/'/g, "\\'");
   const inCancel = (pendingCancelFor === cname);
-  const canCancel = canCurrentUserDelete();
   const selCount = pendingRows.filter(b=>pendingCancelSel.has(b.id)).length;
   const allSel = pendingRows.length > 0 && selCount === pendingRows.length;
 
   let html = `<div class="section-label pend-head"><span>${t('pending_order')}</span>` +
-    (canCancel ? `<button class="pend-cancel-btn" onclick="event.stopPropagation(); startPendingCancel('${cq}')">${inCancel ? t('pend_cancel_close') : t('pend_cancel')}</button>` : '') +
+    `<button class="pend-cancel-btn" onclick="event.stopPropagation(); startPendingCancel('${cq}')">${inCancel ? t('pend_cancel_close') : t('pend_cancel')}</button>` +
     `</div>`;
 
   if(inCancel){
@@ -4125,6 +4124,8 @@ function pendingBlockHtml_(cname, pendingRows){
 }
 
 function startPendingCancel(cname){
+  // The button is always visible; if this login has no Delete right, say so clearly instead of hiding it.
+  if(pendingCancelFor !== cname && !canCurrentUserDelete()){ alert(t('delete_not_allowed')); return; }
   if(pendingCancelFor === cname){ pendingCancelFor = null; }
   else { pendingCancelFor = cname; }
   pendingCancelSel = new Set();
