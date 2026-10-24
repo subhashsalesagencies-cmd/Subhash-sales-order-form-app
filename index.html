@@ -276,6 +276,20 @@
     background:none; border:none; color:var(--rust); font-size:12px;
     text-decoration:underline; padding:0;
   }
+  .pend-head{ display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  .pend-cancel-btn{
+    background:#fff; color:var(--rust); border:1.5px solid var(--rust);
+    border-radius:8px; padding:5px 14px; font-size:12.5px; font-weight:700;
+  }
+  .pend-sel-row{
+    display:flex; align-items:center; gap:10px; margin:0; padding:9px 0;
+    font-weight:500; font-size:13.5px; color:var(--ink); border-bottom:1px solid var(--line);
+  }
+  .pend-sel-row input[type=checkbox]{ width:20px; height:20px; flex:none; margin:0; padding:0; }
+  .pend-selall{ background:#EAF1FB; padding:9px 10px; border-radius:8px; border-bottom:none; margin-bottom:4px; }
+  .pend-cancel-bar{ margin-top:10px; }
+  .pend-cancel-bar .action-btn{ width:100%; }
+  .pend-cancel-bar .action-btn:disabled{ opacity:.45; }
   .section-label{
     font-size:12px; font-weight:700; color:#5b6472; margin:10px 0 4px;
   }
@@ -443,10 +457,13 @@ let customerFilter = '';
 let customerBrandFilter = '';
 let customerDateFilter = ''; // yyyy-mm-dd
 let expandedCustomer = null;
+let pendingCancelFor = null;      // customer whose Pending list is in 'select to cancel' mode
+let pendingCancelSel = new Set(); // booking ids ticked for cancelling
 
 // dispatched-orders tab search state
 let doSearchDesign = '';
 let doSearchBrand = '';
+let doSearchCustomer = '';
 let doSearchDate = '';       // yyyy-mm-dd
 
 // pending-orders tab search state
@@ -593,7 +610,7 @@ const I18N = {
     size:'Size', size_ph:'Tap to choose or type a size', no_size_added:'No size added yet',
     size_add_hint:'Tap + to add each size straight into the order below',
     dispatch_btn:'Dispatch', dispatching:'Dispatching…',
-    edit_btn:'Edit', editing:'Editing…', save_changes:'Save Changes', cancel:'Cancel',
+    edit_btn:'Edit', editing:'Editing…', save_changes:'Save Changes', cancel:'Cancel', pend_cancel:'Cancel', pend_cancel_close:'Close', pend_select_all:'Select All', pend_cancel_selected:'Cancel Selected', pend_cancel_none:'Please select at least one pending item.', pend_cancel_confirm:'Cancel the selected pending items',
     price_per_pcs:'Price per pcs', price_word:'Price', colour_word:'Colour', hide_word:'Hide', unhide_word:'Unhide',
     staff_search_ph:'Search staff name',
     upload_to_ai:'Upload to AI', ai_reading:'AI is reading your order form…',
@@ -685,7 +702,7 @@ const I18N = {
     size:'साइज़', size_ph:'चुनने के लिए टैप करें या साइज़ लिखें', no_size_added:'अभी कोई साइज़ नहीं जोड़ा गया',
     size_add_hint:'हर साइज़ जोड़ने के लिए + दबाएं, सीधा नीचे ऑर्डर में जुड़ जाएगा',
     dispatch_btn:'डिस्पैच', dispatching:'डिस्पैच हो रहा है…',
-    edit_btn:'एडिट', editing:'एडिट हो रहा है…', save_changes:'बदलाव सेव करें', cancel:'रद्द करें',
+    edit_btn:'एडिट', editing:'एडिट हो रहा है…', save_changes:'बदलाव सेव करें', cancel:'रद्द करें', pend_cancel:'रद्द करें', pend_cancel_close:'बंद करें', pend_select_all:'सभी चुनें', pend_cancel_selected:'चुने हुए रद्द करें', pend_cancel_none:'कम से कम एक पेंडिंग आइटम चुनें।', pend_cancel_confirm:'चुने हुए पेंडिंग आइटम रद्द करें',
     price_per_pcs:'कीमत प्रति पीस', price_word:'कीमत', colour_word:'कलर', hide_word:'छुपाएं', unhide_word:'दिखाएं',
     staff_search_ph:'स्टाफ का नाम खोजें',
     upload_to_ai:'AI को दिखाएं', ai_reading:'AI आपका ऑर्डर फॉर्म पढ़ रहा है…',
@@ -3282,13 +3299,17 @@ function renderDispatchedOrders(main){
     const q = doSearchBrand.trim().toLowerCase();
     dispatchedAll = dispatchedAll.filter(b=>(b.brand||'').toLowerCase().includes(q));
   }
+  if(doSearchCustomer.trim()){
+    const q = doSearchCustomer.trim().toLowerCase();
+    dispatchedAll = dispatchedAll.filter(b=>String(b.customerName||'').toLowerCase().includes(q));
+  }
   if(doSearchDate){
     dispatchedAll = dispatchedAll.filter(b=>dispatchDateKey(b.dispatchedAt)===doSearchDate);
   }
 
   let resultsHtml = '';
   if(!dispatchedAll.length){
-    resultsHtml = `<div class="empty">${t('no_dispatched_orders')}${(doSearchDesign||doSearchBrand||doSearchDate) ? ' '+t('no_dispatched_match') : ' '+t('no_dispatched_yet')}</div>`;
+    resultsHtml = `<div class="empty">${t('no_dispatched_orders')}${(doSearchDesign||doSearchBrand||doSearchCustomer||doSearchDate) ? ' '+t('no_dispatched_match') : ' '+t('no_dispatched_yet')}</div>`;
   } else {
     const dateGroups = {};
     dispatchedAll.forEach(b=>{
@@ -3335,27 +3356,36 @@ function renderDispatchedOrders(main){
       <h2>${t('search_dispatched')}</h2>
       <label>${t('by_article_number')}</label>
       <input id="doSearchDesign" list="designList" placeholder="${t('article_ph')}" value="${escapeHtml(doSearchDesign)}" oninput="onDoSearch('design', this.value)">
+      <label style="margin-top:10px;">${t('by_customer_name')}</label>
+      <input id="doSearchCustomer" list="customerList" placeholder="${t('type_name')}" value="${escapeHtml(doSearchCustomer)}" oninput="onDoSearch('customer', this.value)">
       <label style="margin-top:10px;">${t('by_brand_name')}</label>
       <input id="doSearchBrand" list="brandList" placeholder="${t('type_brand_name')}" value="${escapeHtml(doSearchBrand)}" oninput="onDoSearch('brand', this.value)">
       <label style="margin-top:10px;">${t('by_date')}</label>
       <input id="doSearchDate" type="date" value="${escapeHtml(doSearchDate)}" oninput="onDoSearch('date', this.value)">
     </div>
-    ${resultsHtml}
+    <div id="doResults">${resultsHtml}</div>
   `;
 }
 
+let doSearchDebounce_ = null;
 function onDoSearch(which, val){
   if(which==='design') doSearchDesign = val;
   else if(which==='brand') doSearchBrand = val;
+  else if(which==='customer') doSearchCustomer = val;
   else doSearchDate = val;
-  render();
-  setTimeout(()=>{
-    const id = which==='design' ? 'doSearchDesign' : which==='brand' ? 'doSearchBrand' : 'doSearchDate';
-    const el = document.getElementById(id);
-    if(!el) return;
-    el.focus();
-    if(which!=='date') el.setSelectionRange(el.value.length, el.value.length);
-  }, 0);
+  // Only the results list is redrawn; the search boxes stay as they are, so the
+  // phone keyboard does not jump up/down while typing.
+  clearTimeout(doSearchDebounce_);
+  doSearchDebounce_ = setTimeout(refreshDispatchedResultsOnly_, which==='date' ? 0 : 120);
+}
+
+function refreshDispatchedResultsOnly_(){
+  const live = document.getElementById('doResults');
+  if(!live){ render(); return; }
+  const tmp = document.createElement('div');
+  renderDispatchedOrders(tmp);
+  const fresh = tmp.querySelector('#doResults');
+  if(fresh) live.innerHTML = fresh.innerHTML; else render();
 }
 
 // Row passes the Article-number / Brand text typed in the Dispatched tab (if any).
@@ -4023,9 +4053,7 @@ function renderCustomers(main){
           <div class="li"><span>${t('design_word')} ${escapeHtml(b.designNumber)}${b.colour?(' · '+escapeHtml(b.colour)):''} · ${escapeHtml(b.size)}${b.brand?(' · '+escapeHtml(b.brand)):''} · ${b.qty}</span>
           <button class="undo-link" onclick="undoDispatch('${b.id}')">${t('undo')}</button></div>
         `).join('') : ''}
-        ${pendingRows.length ? `<div class="section-label">${t('pending_order')}</div>` + pendingRows.map(b=>`
-          <div class="li"><span>${t('design_word')} ${escapeHtml(b.designNumber)}${b.colour?(' · '+escapeHtml(b.colour)):''} · ${escapeHtml(b.size)}${b.brand?(' · '+escapeHtml(b.brand)):''} · ${b.qty}</span><span style="color:var(--rust);">${t('badge_pending')}</span></div>
-        `).join('') : ''}
+        ${pendingRows.length ? pendingBlockHtml_(cname, pendingRows) : ''}
       </div>`;
     }
 
@@ -4057,36 +4085,129 @@ function renderCustomers(main){
       <label style="margin-top:10px;">${t('by_date')}</label>
       <input id="custDateFilter" type="date" value="${escapeHtml(customerDateFilter)}" oninput="onCustomerDateFilter(this.value)">
     </div>
-    ${cards || `<div class="empty">${t('no_customer_found')}</div>`}
+    <div id="custResults">${cards || `<div class="empty">${t('no_customer_found')}</div>`}</div>
   `;
 }
 
+// Builds the "Pending Order" part of an opened customer card, including the Cancel
+// button next to the heading and the tick-boxes / Select All when Cancel is switched on.
+function pendingBlockHtml_(cname, pendingRows){
+  const cq = cname.replace(/'/g, "\\'");
+  const inCancel = (pendingCancelFor === cname);
+  const canCancel = canCurrentUserDelete();
+  const selCount = pendingRows.filter(b=>pendingCancelSel.has(b.id)).length;
+  const allSel = pendingRows.length > 0 && selCount === pendingRows.length;
+
+  let html = `<div class="section-label pend-head"><span>${t('pending_order')}</span>` +
+    (canCancel ? `<button class="pend-cancel-btn" onclick="event.stopPropagation(); startPendingCancel('${cq}')">${inCancel ? t('pend_cancel_close') : t('pend_cancel')}</button>` : '') +
+    `</div>`;
+
+  if(inCancel){
+    html += `<label class="pend-sel-row pend-selall" onclick="event.stopPropagation()">
+      <input type="checkbox" ${allSel?'checked':''} onchange="togglePendingCancelAll('${cq}')">
+      <span><b>${t('pend_select_all')}</b> (${pendingRows.length})</span></label>`;
+  }
+
+  html += pendingRows.map(b=>{
+    const label = `${t('design_word')} ${escapeHtml(b.designNumber)}${b.colour?(' · '+escapeHtml(b.colour)):''} · ${escapeHtml(b.size)}${b.brand?(' · '+escapeHtml(b.brand)):''} · ${b.qty}`;
+    if(inCancel){
+      return `<label class="pend-sel-row" onclick="event.stopPropagation()">
+        <input type="checkbox" ${pendingCancelSel.has(b.id)?'checked':''} onchange="togglePendingCancelSel('${b.id}')">
+        <span>${label}</span></label>`;
+    }
+    return `<div class="li"><span>${label}</span><span style="color:var(--rust);">${t('badge_pending')}</span></div>`;
+  }).join('');
+
+  if(inCancel){
+    html += `<div class="pend-cancel-bar"><button class="action-btn del" ${selCount?'':'disabled'} onclick="event.stopPropagation(); confirmPendingCancel('${cq}')">${t('pend_cancel_selected')} (${selCount})</button></div>`;
+  }
+  return html;
+}
+
+function startPendingCancel(cname){
+  if(pendingCancelFor === cname){ pendingCancelFor = null; }
+  else { pendingCancelFor = cname; }
+  pendingCancelSel = new Set();
+  refreshCustomersResultsOnly_();
+}
+
+function visiblePendingIds_(cname){
+  return bookings.filter(b=>b.customerName===cname && b.status==='pending' && !b.trashed && custRowOk_(b)).map(b=>b.id);
+}
+
+function togglePendingCancelSel(id){
+  if(pendingCancelSel.has(id)) pendingCancelSel.delete(id); else pendingCancelSel.add(id);
+  refreshCustomersResultsOnly_();
+}
+
+function togglePendingCancelAll(cname){
+  const ids = visiblePendingIds_(cname);
+  const allSel = ids.length > 0 && ids.every(id=>pendingCancelSel.has(id));
+  if(allSel) ids.forEach(id=>pendingCancelSel.delete(id));
+  else ids.forEach(id=>pendingCancelSel.add(id));
+  refreshCustomersResultsOnly_();
+}
+
+// Cancelled pending items are not destroyed — they go to the Deleted tab,
+// exactly like a deleted order, so they can still be restored from there.
+async function confirmPendingCancel(cname){
+  if(!canCurrentUserDelete()){ alert(t('delete_not_allowed')); return; }
+  const ids = visiblePendingIds_(cname).filter(id=>pendingCancelSel.has(id));
+  if(!ids.length){ alert(t('pend_cancel_none')); return; }
+  if(!confirm(`${t('pend_cancel_confirm')} (${ids.length}) — ${cname}?`)) return;
+  markBusy(t('processing_word'));
+  const now = new Date().toISOString();
+  const by = currentStaff ? { name: currentStaff.name, mobile: currentStaff.mobile } : null;
+  const idSet = new Set(ids);
+  let total = 0;
+  bookings.forEach(b=>{
+    if(idSet.has(b.id) && b.status==='pending' && !b.trashed){
+      b.trashed = true;
+      b.trashedAt = now;
+      b.trashedBy = by;
+      b.cancelledPending = true;
+      total += b.qty;
+    }
+  });
+  pendingCancelFor = null;
+  pendingCancelSel = new Set();
+  await saveData();
+  await logActivity('Pending Items Cancelled', `${cname} — ${ids.length} item(s), ${total} sets`);
+  render();
+}
+
+// Redraws only the customer list under the search boxes and leaves the text box
+// being typed in untouched, so the phone keyboard no longer jumps up/down on every letter.
+function refreshCustomersResultsOnly_(){
+  const live = document.getElementById('custResults');
+  if(!live){ render(); return; }
+  const tmp = document.createElement('div');
+  renderCustomers(tmp);
+  const fresh = tmp.querySelector('#custResults');
+  if(fresh) live.innerHTML = fresh.innerHTML; else render();
+}
+
+let custFilterDebounce_ = null;
 function onCustomerFilter(val){
   customerFilter = val;
-  render();
-  setTimeout(()=>{
-    const el = document.getElementById('custFilter');
-    if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
-  }, 0);
+  clearTimeout(custFilterDebounce_);
+  custFilterDebounce_ = setTimeout(refreshCustomersResultsOnly_, 120);
 }
 
 function onCustomerBrandFilter(val){
   customerBrandFilter = val;
-  render();
-  setTimeout(()=>{
-    const el = document.getElementById('custBrandFilter');
-    if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length); }
-  }, 0);
+  clearTimeout(custFilterDebounce_);
+  custFilterDebounce_ = setTimeout(refreshCustomersResultsOnly_, 120);
 }
 
 function onCustomerDateFilter(val){
   customerDateFilter = val;
-  render();
-  setTimeout(()=>{ const el = document.getElementById('custDateFilter'); if(el) el.focus(); }, 0);
+  refreshCustomersResultsOnly_();
 }
 
 function toggleCustomer(cname){
   expandedCustomer = expandedCustomer === cname ? null : cname;
+  pendingCancelFor = null; pendingCancelSel = new Set();
   render();
 }
 
