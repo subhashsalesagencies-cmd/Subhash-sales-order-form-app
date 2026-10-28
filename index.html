@@ -393,6 +393,28 @@
     background:#fff; color:var(--rust); border:1.5px solid var(--rust);
     border-radius:8px; padding:8px 12px; font-size:12.5px; font-weight:700;
   }
+  /* ---- Voice order ---- */
+  .voice-ov{ position:fixed; inset:0; z-index:10000; background:rgba(0,0,0,.5); display:flex; align-items:flex-end; justify-content:center; }
+  .voice-sheet{ background:#fff; width:100%; max-width:560px; max-height:90vh; overflow-y:auto; border-radius:18px 18px 0 0; padding:14px 14px calc(16px + env(safe-area-inset-bottom,0px)); box-shadow:0 -6px 24px rgba(0,0,0,.25); }
+  .voice-head{ display:flex; justify-content:space-between; align-items:center; font-size:17px; color:var(--navy); }
+  .voice-x{ border:none; background:none; font-size:20px; cursor:pointer; color:#555; width:auto; margin:0; padding:4px 8px; }
+  .voice-status{ margin:8px 0 6px; font-size:14px; font-weight:700; color:var(--navy); display:flex; align-items:center; gap:8px; }
+  .voice-dot{ width:11px; height:11px; border-radius:50%; background:#d33; display:inline-block; animation:voicePulse 1s infinite; }
+  @keyframes voicePulse{ 0%{ box-shadow:0 0 0 0 rgba(221,51,51,.6);} 100%{ box-shadow:0 0 0 10px rgba(221,51,51,0);} }
+  .voice-langs{ display:flex; gap:8px; margin-bottom:8px; }
+  .voice-langs button{ flex:1; margin:0; padding:6px 8px; font-size:12.5px; border:1.5px solid #c9d0da; background:#fff; color:#445; border-radius:8px; cursor:pointer; }
+  .voice-langs button.on{ border-color:var(--navy); background:var(--navy); color:#fff; }
+  .voice-live{ background:#F3F5F8; border-radius:8px; padding:8px 10px; font-size:14px; color:#556; font-style:italic; margin-bottom:8px; }
+  .voice-summary{ border:1.5px solid #dfe4ea; border-radius:10px; padding:8px 10px; font-size:14px; }
+  .vo-row{ padding:2px 0; }
+  .vo-item{ padding:4px 8px; margin-top:4px; background:#EEF4F0; border-radius:6px; font-size:13.5px; }
+  .vo-pend{ background:#FFF6DD; }
+  .voice-hint{ margin:10px 0 4px; font-size:12.5px; color:#667; }
+  .voice-hint summary{ cursor:pointer; font-weight:600; color:var(--navy); }
+  .voice-hint div{ margin-top:6px; line-height:1.5; }
+  .voice-actions{ display:flex; gap:10px; margin-top:12px; align-items:center; }
+  .voice-mic{ flex:1; margin:0; padding:12px 10px; border-radius:10px; border:2px solid var(--navy); background:#fff; color:var(--navy); font-size:15px; font-weight:700; cursor:pointer; }
+  .voice-mic.live{ border-color:#d33; color:#d33; }
 </style>
 </head>
 <body>
@@ -622,6 +644,14 @@ const I18N = {
     edit_btn:'Edit', editing:'Editing…', save_changes:'Save Changes', cancel:'Cancel', pend_cancel:'Cancel', pend_cancel_close:'Close', pend_select_all:'Select All', pend_cancel_selected:'Cancel Selected', pend_cancel_none:'Please select at least one pending item.', pend_cancel_confirm:'Cancel the selected pending items',
     price_per_pcs:'Price per pcs', price_word:'Price', colour_word:'Colour', hide_word:'Hide', unhide_word:'Unhide',
     staff_search_ph:'Search staff name',
+    voice_order:"Voice Order", voice_title:"Voice Order", voice_listening:"Listening… speak your order", voice_paused:"Mic is paused",
+    voice_start:"Start", voice_pause:"Pause", voice_how:"How to speak?",
+    voice_hint:"Say it like this:<br><b>customer</b> Ramesh <b>city</b> Indore <b>brand</b> Grab it, <b>design</b> 118 <b>size</b> 20/24 26/30 <b>2 set</b> <b>colour</b> red blue, then <b>design</b> 120 <b>size</b> 32/36 <b>3 set</b>, and finally say <b>save</b>.<br>Say <b>design</b> again for the next design. For pieces say <b>3 pcs</b>; for rate say <b>price</b> 250. To fix a name, just say its word again (e.g. <b>brand</b> Spring).",
+    voice_unsupported:"This phone/browser does not support voice input. Please use Google Chrome.",
+    voice_mic_denied:"Microphone permission is blocked. Allow the microphone for this site in browser settings.",
+    voice_need_net:"Voice needs an internet connection.", voice_no_mic:"No microphone found.",
+    voice_no_size:"size was not spoken, so this design was not added", voice_dup:"Already ordered (skipped)",
+    voice_missing:"Cannot save yet, missing", voice_save_failed:"Order was not saved, please check and try again", voice_saved_speak:"Order saved",
     upload_to_ai:'Upload to AI', ai_reading:'AI is reading your order form…',
     ai_read_done:'AI has filled in the order below — please check it before saving',
     ai_read_failed:'Could not read this file', ai_max_files:'Please select at most 5 photos at a time.', ai_no_mix:'Please upload Excel files separately from photos/PDFs.',
@@ -714,6 +744,14 @@ const I18N = {
     edit_btn:'एडिट', editing:'एडिट हो रहा है…', save_changes:'बदलाव सेव करें', cancel:'रद्द करें', pend_cancel:'रद्द करें', pend_cancel_close:'बंद करें', pend_select_all:'सभी चुनें', pend_cancel_selected:'चुने हुए रद्द करें', pend_cancel_none:'कम से कम एक पेंडिंग आइटम चुनें।', pend_cancel_confirm:'चुने हुए पेंडिंग आइटम रद्द करें',
     price_per_pcs:'कीमत प्रति पीस', price_word:'कीमत', colour_word:'कलर', hide_word:'छुपाएं', unhide_word:'दिखाएं',
     staff_search_ph:'स्टाफ का नाम खोजें',
+    voice_order:"बोलकर ऑर्डर", voice_title:"बोलकर ऑर्डर", voice_listening:"सुन रहा है… अपना ऑर्डर बोलिए", voice_paused:"माइक रुका हुआ है",
+    voice_start:"शुरू करें", voice_pause:"रोकें", voice_how:"कैसे बोलें?",
+    voice_hint:"ऐसे बोलिए:<br><b>customer</b> रमेश <b>city</b> इंदौर <b>brand</b> ग्रैब इट, <b>design</b> 118 <b>size</b> 20/24 26/30 <b>2 set</b> <b>colour</b> red blue, फिर <b>design</b> 120 <b>size</b> 32/36 <b>3 set</b>, और आख़िर में बोलिए <b>save</b>।<br>अगले डिज़ाइन के लिए फिर से <b>design</b> बोलिए। पीस के लिए <b>3 pcs</b>, रेट के लिए <b>price</b> 250। कोई नाम सुधारना हो तो उसका शब्द दोबारा बोलिए (जैसे <b>brand</b> Spring)।",
+    voice_unsupported:"इस फ़ोन/ब्राउज़र में वॉइस सपोर्ट नहीं है। कृपया Google Chrome इस्तेमाल करें।",
+    voice_mic_denied:"माइक की अनुमति बंद है। ब्राउज़र सेटिंग में इस साइट के लिए माइक चालू करें।",
+    voice_need_net:"बोलकर ऑर्डर के लिए इंटरनेट चाहिए।", voice_no_mic:"माइक नहीं मिला।",
+    voice_no_size:"साइज़ नहीं बोला गया, इसलिए यह डिज़ाइन नहीं जुड़ा", voice_dup:"पहले से ऑर्डर में है (छोड़ दिया)",
+    voice_missing:"अभी सेव नहीं हो सकता, कमी", voice_save_failed:"ऑर्डर सेव नहीं हुआ, कृपया जाँचकर दोबारा करें", voice_saved_speak:"ऑर्डर सेव हो गया",
     upload_to_ai:'AI को दिखाएं', ai_reading:'AI आपका ऑर्डर फॉर्म पढ़ रहा है…',
     ai_read_done:'AI ने नीचे ऑर्डर भर दिया है — कृपया सेव करने से पहले जांच लें',
     ai_read_failed:'यह फाइल पढ़ी नहीं जा सकी', ai_max_files:'एक बार में ज़्यादा से ज़्यादा 5 फोटो चुनें।', ai_no_mix:'Excel फाइलें फोटो/PDF से अलग अपलोड करें।',
@@ -2135,9 +2173,15 @@ function renderBook(main){
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;">
         <h2>${t('add_design')}</h2>
+        <div style="display:flex;align-items:flex-start;gap:16px;">
+        <div style="display:flex;flex-direction:column;align-items:center;">
+          <button type="button" onclick="voiceOpen_()" style="width:34px;height:34px;border-radius:50%;border:2px solid var(--rust);background:#fff;color:var(--rust);font-size:17px;line-height:1;cursor:pointer;padding:0;">🎤</button>
+          <span style="font-size:10px;color:var(--rust);font-weight:600;margin-top:2px;">${t('voice_order')}</span>
+        </div>
         <div style="display:flex;flex-direction:column;align-items:center;">
           <button type="button" onclick="document.getElementById('aiOrderFileInput').click()" style="width:34px;height:34px;border-radius:50%;border:2px solid var(--navy);background:#fff;color:var(--navy);font-size:20px;font-weight:700;line-height:1;cursor:pointer;">+</button>
           <span style="font-size:10px;color:var(--navy);font-weight:600;margin-top:2px;">${t('upload_to_ai')}</span>
+        </div>
         </div>
         <input type="file" id="aiOrderFileInput" accept=".pdf,.xlsx,.xls,.jpg,.jpeg,.png" multiple style="display:none;" onchange="handleAiOrderFileUpload(this.files)">
       </div>
@@ -2717,6 +2761,360 @@ async function shareNewOrderPdf(cname, rows, total){
   const brandPart = pdfNamePart_(rows[0].brand, true);
   const fileName = `Order_${pdfNamePart_(cname, false) || 'CUSTOMER'}${brandPart ? '_'+brandPart : ''}.pdf`;
   await sharePdfBlob(blob, fileName, `Order — ${cname}`, `New Order — ${cname}, ${t('total')} ${totalsUi_(rows)}`);
+}
+
+/* ---------------- VOICE ORDER ----------------
+   Mic button in the Order tab: staff speak the whole order and it fills the
+   form by itself. Words that start a field: customer, city, brand, design,
+   size, colour, price, qty (Hindi words also work). "2 set" / "3 pcs" gives
+   the quantity. Saying "design ..." again starts the next design. Saying
+   "save" saves the order. Uses the phone's own speech recognition (Chrome),
+   so it needs internet and microphone permission. */
+const VOICE_NUMWORDS_ = {
+  zero:0, one:1, two:2, three:3, four:4, five:5, six:6, seven:7, eight:8, nine:9, ten:10,
+  eleven:11, twelve:12, fifteen:15, sixteen:16, twenty:20,
+  ek:1, 'एक':1, do:2, 'दो':2, teen:3, 'तीन':3, char:4, chaar:4, 'चार':4,
+  paanch:5, panch:5, 'पांच':5, 'पाँच':5, chhe:6, cheh:6, 'छह':6, 'छे':6,
+  saat:7, 'सात':7, aath:8, 'आठ':8, nau:9, 'नौ':9, das:10, 'दस':10
+};
+const VOICE_KW_ = {
+  customer: ['customer','customers','कस्टमर','कस्टमर्स','party','पार्टी','ग्राहक'],
+  city:     ['city','सिटी','शहर'],
+  brand:    ['brand','ब्रांड','ब्रैंड'],
+  design:   ['design','डिजाइन','डिज़ाइन','डिज़ाईन','article','आर्टिकल'],
+  size:     ['size','sizes','साइज','साइज़','साईज'],
+  colour:   ['colour','color','colors','colours','कलर','रंग'],
+  price:    ['price','rate','प्राइस','रेट','भाव','कीमत'],
+  qty:      ['qty','quantity','क्वांटिटी','मात्रा']
+};
+const VOICE_KW_LOOKUP_ = (()=>{ const m = {}; Object.keys(VOICE_KW_).forEach(k=>VOICE_KW_[k].forEach(w=>{ m[w] = k; })); return m; })();
+const VOICE_SAVE_ = { 'save':1, 'सेव':1, 'सेव्':1, 'सैव':1 };
+// Filler words that are never part of a name / colour / number.
+const VOICE_DROP_ = { 'next':1, 'अगला':1, 'अगली':1, 'agla':1, 'order':1, 'ऑर्डर':1, 'आर्डर':1, 'ऑडर':1, 'karo':1, 'करो':1, 'kar':1, 'कर':1, 'please':1 };
+const VOICE_AND_ = { 'and':1, 'aur':1, 'और':1, '&':1 };
+
+let voiceRec_ = null, voiceWanted_ = false, voiceListening_ = false, voiceSaving_ = false;
+let voiceLang_ = 'en-IN';
+try{ voiceLang_ = localStorage.getItem('ssa_voice_lang') || 'en-IN'; }catch(e){}
+let voiceState_ = null, voiceLog_ = [], voiceInterim_ = '', voiceSession_ = 0, voiceSeen_ = {};
+
+function voiceNewState_(){
+  return { field:null, customer: draftCustomer || '', city: draftCity || '', brand: draftBrand || '',
+           design:'', sizeTokens:[], colours:[], price:'', qty:0, unit:'set' };
+}
+function voiceTitle_(s){
+  return String(s||'').trim().replace(/\s+/g,' ').replace(/(^|\s)([a-z])/g, (m,a,b)=>a+b.toUpperCase());
+}
+function voiceCompact_(s){ return String(s||'').toLowerCase().replace(/[^a-z0-9\u0900-\u097F]+/g,''); }
+function voiceNum_(tk){
+  if(/^\d+(\.\d+)?$/.test(tk)) return tk;
+  if(Object.prototype.hasOwnProperty.call(VOICE_NUMWORDS_, tk)) return String(VOICE_NUMWORDS_[tk]);
+  return null;
+}
+
+// Spoken text -> clean lower-case tokens ("20 by 24" -> "20/24", "2 set" -> "@q:2:set").
+function voiceNormalize_(txt){
+  let s = String(txt || '').toLowerCase();
+  s = s.replace(/[०-९]/g, ch=>String('०१२३४५६७८९'.indexOf(ch)));
+  s = s.replace(/(\d+)\s*(?:by|बाय|slash|स्लैश|to|टू)\s*(\d+)/g, '$1/$2');
+  s = s.replace(/(\d+)\s*\/\s*(\d+)/g, '$1/$2');
+  const numAlt = Object.keys(VOICE_NUMWORDS_).sort((a,b)=>b.length-a.length).join('|');
+  const qtyRe = new RegExp('(\\d+|'+numAlt+')\\s*(sets?|सेट्स|सेट|pcs|pc|pieces|piece|पीस)(?=$|[\\s,.;])', 'g');
+  s = s.replace(qtyRe, (m, n, u)=>{
+    const num = /^\d+$/.test(n) ? n : String(VOICE_NUMWORDS_[n]);
+    const unit = /^(pc|piece|पीस)/.test(u) ? 'pcs' : 'set';
+    return ' @q:'+num+':'+unit+' ';
+  });
+  s = s.replace(/[,;।"'“”]/g,' ').replace(/\.(?!\d)/g,' ');
+  return s.split(/\s+/).filter(Boolean);
+}
+
+function voiceCustomerFull_(){
+  const st = voiceState_ || voiceNewState_();
+  const name = voiceTitle_(st.customer), city = voiceTitle_(st.city);
+  if(!name) return '';
+  let full = name;
+  if(city && !normKey_(name).endsWith(normKey_(city))) full = name + ' ' + city;
+  const ex = bookings.find(b=>voiceCompact_(b.customerName) === voiceCompact_(full));
+  return ex ? String(ex.customerName) : full;
+}
+function voiceBrandFull_(){
+  const st = voiceState_ || voiceNewState_();
+  const b = voiceTitle_(st.brand);
+  if(!b) return '';
+  const ex = bookings.find(x=>voiceCompact_(x.brand) === voiceCompact_(b));
+  return ex ? String(ex.brand) : b;
+}
+
+// Plain numbers are paired into size ranges ("20 24 26 30" -> 20/24, 26/30).
+function voiceSizes_(tokens, brand){
+  const out = [];
+  let i = 0;
+  while(i < tokens.length){
+    const a = tokens[i], b = tokens[i+1];
+    if(/^\d+$/.test(a) && b && /^\d+$/.test(b)){
+      const na = +a, nb = +b;
+      if(SIZE_PRESETS.indexOf(a+'/'+b) !== -1 || (nb > na && nb - na <= 6)){ out.push(a+'/'+b); i += 2; continue; }
+    }
+    out.push(a); i++;
+  }
+  // One combined range gets split automatically, exactly like typing it by hand.
+  return out.length === 1 ? expandSizeRange_(out[0], brand) : out;
+}
+
+function voiceSay_(msg, isErr){
+  voiceLog_.push({ msg, err: !!isErr });
+  if(voiceLog_.length > 4) voiceLog_.shift();
+}
+
+// Moves the design being spoken into the order list (with the same
+// duplicate checks as the + button).
+function voiceCommitDesign_(){
+  const st = voiceState_;
+  if(!st || !st.design) { if(st){ st.sizeTokens = []; st.colours = []; st.price = ''; st.qty = 0; } return; }
+  const designNo = st.design;
+  if(!st.sizeTokens.length){
+    voiceSay_(`⚠️ ${designNo}: ${t('voice_no_size')}`, true);
+  } else {
+    const brandNow = voiceBrandFull_();
+    const cust = voiceCustomerFull_();
+    const sizes = voiceSizes_(st.sizeTokens, brandNow);
+    const colours = st.colours.length ? st.colours : [''];
+    const qty = st.qty || defaultQtyFor_(st.unit);
+    const price = st.price || '';
+    const toAdd = [], dups = [];
+    colours.forEach(col=>{
+      sizes.forEach(size=>{
+        if(toAdd.some(x=>normKey_(x.col)===normKey_(col) && normKey_(x.size)===normKey_(size))) return;
+        if(findCartDuplicate_(designNo, col, size) || findSavedDuplicate_(cust, brandNow, designNo, col, size)){
+          dups.push(`${designNo}${col ? ' · '+col : ''} · ${size}`); return;
+        }
+        toAdd.push({ col, size });
+      });
+    });
+    toAdd.forEach(({ col, size })=>{
+      let entry = draftCart.find(d=>d.designNumber===designNo && (d.colour||'')===col);
+      if(!entry){ entry = { designNumber: designNo, colour: col, sizes: [] }; draftCart.push(entry); }
+      entry.sizes.push({ size, qty, price, unit: st.unit });
+    });
+    if(dups.length) voiceSay_(`⚠️ ${t('voice_dup')}: ${dups.join(', ')}`, true);
+  }
+  st.design = ''; st.sizeTokens = []; st.colours = []; st.price = ''; st.qty = 0;
+}
+
+function voiceApplyToForm_(){
+  const st = voiceState_;
+  if(!st) return;
+  draftCustomer = voiceTitle_(st.customer);
+  draftCity = voiceTitle_(st.city);
+  draftBrand = voiceBrandFull_() || voiceTitle_(st.brand);
+  if(typeof currentTab !== 'undefined' && currentTab === 'book') render();
+}
+
+// Reads one finished piece of speech and updates the order.
+function voiceFeed_(text){
+  const st = voiceState_;
+  if(!st) return;
+  const toks = voiceNormalize_(text);
+  let wantSave = false;
+  for(const tk of toks){
+    if(VOICE_DROP_[tk]) continue;
+    const kw = VOICE_KW_LOOKUP_[tk];
+    if(kw){
+      if(kw === 'design'){ voiceCommitDesign_(); st.design = ''; }
+      if(kw === 'customer' || kw === 'city' || kw === 'brand') st[kw] = '';
+      st.field = kw;
+      continue;
+    }
+    if(VOICE_SAVE_[tk]){ wantSave = true; st.field = null; continue; }
+    if(tk.indexOf('@q:') === 0){
+      const p = tk.split(':');
+      st.qty = parseInt(p[1]) || st.qty; st.unit = p[2] === 'pcs' ? 'pcs' : 'set';
+      continue;
+    }
+    switch(st.field){
+      case 'customer': case 'city': case 'brand':
+        st[st.field] += (st[st.field] ? ' ' : '') + tk; break;
+      case 'design':
+        if(!st.design){ const n = voiceNum_(tk); st.design = (n !== null ? n : tk).toUpperCase(); }
+        break;
+      case 'size': {
+        const n = voiceNum_(tk);
+        const v = n !== null ? n : tk;
+        if(/^\d+m?([\/x\-]\d+)?$/i.test(v)) st.sizeTokens.push(v);
+        break;
+      }
+      case 'colour':
+        if(VOICE_AND_[tk]) break;
+        st.colours.push(tk.replace(/\b[a-z]/, c=>c.toUpperCase())); break;
+      case 'price': { const n = voiceNum_(tk); if(n !== null) st.price = n; break; }
+      case 'qty':   { const n = voiceNum_(tk); if(n !== null) st.qty = parseInt(n) || 0; break; }
+    }
+  }
+  voiceApplyToForm_();
+  voiceRenderOverlay_();
+  if(wantSave) voiceSaveNow_();
+}
+
+async function voiceSaveNow_(){
+  if(voiceSaving_ || !voiceState_) return;
+  voiceSaving_ = true;
+  try{
+    const st = voiceState_;
+    if(st.design && !st.sizeTokens.length){
+      voiceSay_(`⚠️ ${st.design}: ${t('voice_no_size')}`, true); voiceRenderOverlay_(); return;
+    }
+    voiceCommitDesign_();
+    voiceApplyToForm_();
+    const miss = [];
+    if(!voiceCustomerFull_()) miss.push(t('customer_name'));
+    if(!voiceBrandFull_()) miss.push(t('brand_name'));
+    if(!draftCart.length) miss.push(t('designs_in_order'));
+    if(miss.length){
+      voiceSay_(`⚠️ ${t('voice_missing')}: ${miss.join(', ')}`, true); voiceRenderOverlay_(); return;
+    }
+    voiceStopRec_();
+    voiceSay_(t('saving_word')); voiceRenderOverlay_();
+    await saveOrder();
+    if(!draftCart.length){
+      try{ const u = new SpeechSynthesisUtterance(t('voice_saved_speak')); u.lang = voiceLang_ === 'hi-IN' ? 'hi-IN' : 'en-IN'; speechSynthesis.speak(u); }catch(e){}
+      voiceClose_(true);
+    } else {
+      voiceSay_(`⚠️ ${t('voice_save_failed')}`, true); voiceRenderOverlay_();
+    }
+  } finally { voiceSaving_ = false; }
+}
+
+/* ---- microphone / speech recognition ---- */
+function voiceStopRec_(){
+  voiceWanted_ = false;
+  if(voiceRec_){ try{ voiceRec_.onend = null; voiceRec_.stop(); }catch(e){} voiceRec_ = null; }
+  voiceListening_ = false; voiceInterim_ = '';
+}
+
+function voiceStartRec_(){
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if(!SR){ voiceSay_(`⚠️ ${t('voice_unsupported')}`, true); voiceRenderOverlay_(); return; }
+  voiceStopRec_();
+  const rec = new SR();
+  const session = ++voiceSession_;
+  rec.lang = voiceLang_;
+  rec.continuous = true;
+  rec.interimResults = true;
+  rec.maxAlternatives = 1;
+  rec.onresult = (ev)=>{
+    let interim = '';
+    for(let i = ev.resultIndex; i < ev.results.length; i++){
+      const r = ev.results[i];
+      if(r.isFinal){
+        const key = session + ':' + i;
+        if(voiceSeen_[key]) continue;          // Android sometimes repeats a finished phrase
+        voiceSeen_[key] = 1;
+        voiceFeed_(r[0].transcript);
+      } else interim += r[0].transcript;
+    }
+    voiceInterim_ = interim;
+    voiceRenderOverlay_();
+  };
+  rec.onerror = (e)=>{
+    const code = e && e.error;
+    if(code === 'not-allowed' || code === 'service-not-allowed'){ voiceWanted_ = false; voiceSay_(`⚠️ ${t('voice_mic_denied')}`, true); }
+    else if(code === 'network'){ voiceWanted_ = false; voiceSay_(`⚠️ ${t('voice_need_net')}`, true); }
+    else if(code === 'audio-capture'){ voiceWanted_ = false; voiceSay_(`⚠️ ${t('voice_no_mic')}`, true); }
+    voiceRenderOverlay_();
+  };
+  rec.onend = ()=>{
+    voiceListening_ = false;
+    if(voiceWanted_ && voiceRec_ === rec){
+      // The browser stops by itself after a pause — quietly start listening again.
+      setTimeout(()=>{ if(voiceWanted_ && voiceRec_ === rec){ try{ rec.start(); voiceListening_ = true; }catch(e){} voiceRenderOverlay_(); } }, 250);
+    }
+    voiceRenderOverlay_();
+  };
+  voiceRec_ = rec;
+  voiceWanted_ = true;
+  try{ rec.start(); voiceListening_ = true; }catch(e){ console.error('Voice start failed', e); }
+  voiceRenderOverlay_();
+}
+
+function voiceToggle_(){
+  if(voiceWanted_){
+    voiceStopRec_();
+    if(voiceState_){ voiceCommitDesign_(); voiceApplyToForm_(); }
+    voiceRenderOverlay_();
+  } else voiceStartRec_();
+}
+
+function voiceSetLang_(code){
+  voiceLang_ = code;
+  try{ localStorage.setItem('ssa_voice_lang', code); }catch(e){}
+  if(voiceWanted_) voiceStartRec_(); else voiceRenderOverlay_();
+}
+
+/* ---- the bottom sheet ---- */
+function voiceOpen_(){
+  if(document.getElementById('voiceOv')) return;
+  voiceState_ = voiceNewState_();
+  voiceLog_ = []; voiceInterim_ = ''; voiceSeen_ = {};
+  const ov = document.createElement('div');
+  ov.id = 'voiceOv';
+  ov.className = 'voice-ov';
+  ov.innerHTML = `
+    <div class="voice-sheet">
+      <div class="voice-head"><b>🎤 ${t('voice_title')}</b><button class="voice-x" onclick="voiceClose_()">✕</button></div>
+      <div id="voStatus" class="voice-status"></div>
+      <div class="voice-langs">
+        <button id="voLangEn" onclick="voiceSetLang_('en-IN')">English / Hinglish</button>
+        <button id="voLangHi" onclick="voiceSetLang_('hi-IN')">हिंदी</button>
+      </div>
+      <div id="voLive" class="voice-live"></div>
+      <div id="voSummary" class="voice-summary"></div>
+      <div id="voLog"></div>
+      <details class="voice-hint"><summary>${t('voice_how')}</summary><div>${t('voice_hint')}</div></details>
+      <div class="voice-actions">
+        <button id="voMicBtn" class="voice-mic" onclick="voiceToggle_()"></button>
+        <button class="primary" style="flex:1;margin:0;" onclick="voiceSaveNow_()">${t('save_order')}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  voiceStartRec_();
+}
+
+function voiceClose_(skipRender){
+  voiceStopRec_();
+  if(voiceState_ && !skipRender){ voiceCommitDesign_(); voiceApplyToForm_(); }
+  voiceState_ = null;
+  const ov = document.getElementById('voiceOv');
+  if(ov) ov.remove();
+}
+
+function voiceRenderOverlay_(){
+  if(typeof document === 'undefined' || !document.getElementById('voiceOv')) return;
+  const st = voiceState_ || voiceNewState_();
+  const $ = id => document.getElementById(id);
+  $('voStatus').innerHTML = voiceWanted_
+    ? `<span class="voice-dot"></span>${t('voice_listening')}`
+    : `⏸ ${t('voice_paused')}`;
+  $('voLangEn').className = voiceLang_ === 'hi-IN' ? '' : 'on';
+  $('voLangHi').className = voiceLang_ === 'hi-IN' ? 'on' : '';
+  $('voLive').textContent = voiceInterim_ || '';
+  $('voLive').style.display = voiceInterim_ ? 'block' : 'none';
+  const mb = $('voMicBtn');
+  mb.textContent = voiceWanted_ ? `⏸ ${t('voice_pause')}` : `🎤 ${t('voice_start')}`;
+  mb.className = 'voice-mic' + (voiceWanted_ ? ' live' : '');
+
+  const rows = [];
+  const cust = voiceTitle_(st.customer), city = voiceTitle_(st.city), brand = voiceTitle_(st.brand);
+  rows.push(`<div class="vo-row"><b>${t('customer_name')}:</b> ${cust ? escapeHtml(cust) : '—'}${city ? ' · ' + escapeHtml(city) : ''}</div>`);
+  rows.push(`<div class="vo-row"><b>${t('brand_name')}:</b> ${brand ? escapeHtml(brand) : '—'}</div>`);
+  draftCart.forEach(d=>{
+    rows.push(`<div class="vo-item">${escapeHtml(d.designNumber)}${d.colour ? ' · ' + escapeHtml(d.colour) : ''} — ${d.sizes.map(s=>escapeHtml(s.size) + ' × ' + s.qty + (unitOf_(s)==='pcs' ? ' pcs' : '')).join(', ')}</div>`);
+  });
+  if(st.design){
+    rows.push(`<div class="vo-item vo-pend">${escapeHtml(st.design)}${st.colours.length ? ' · ' + escapeHtml(st.colours.join(' ')) : ''} — ${escapeHtml(st.sizeTokens.join(' ')) || '…'}${st.qty ? ' × ' + st.qty : ''} …</div>`);
+  }
+  $('voSummary').innerHTML = rows.join('');
+  $('voLog').innerHTML = voiceLog_.map(l=>`<div class="msg ${l.err ? 'err' : ''}" style="margin:6px 0 0;">${escapeHtml(l.msg)}</div>`).join('');
 }
 
 /* ---------------- ARTICLE (DISPATCH) SEARCH TAB ---------------- */
