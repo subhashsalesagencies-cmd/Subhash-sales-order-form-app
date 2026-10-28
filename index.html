@@ -321,6 +321,7 @@
     background:var(--sage); color:#fff; border:none; border-radius:8px;
     padding:8px 12px; font-size:13px; font-weight:700;
   }
+  .restore-btn.mini{ padding:3px 10px; font-size:11.5px; border-radius:6px; }
   .subtle{ color:#7e8896; font-size:12.5px; }
 
   .log-card{
@@ -441,6 +442,14 @@ let tempSizeText = '';       // what is typed in the Size box (kept after + so t
 let tempPrice = '';
 let activitySearchStaff = '';
 let tempSizes = [];          // [{size, qty}]
+let orderUnit = 'set';
+let qtyTouched = false;      // true once the person types their own quantity (then it is never auto-changed)
+function defaultQtyFor_(u){ return u==='pcs' ? 3 : 1; }   // Pcs orders start at 3 pcs
+function onUnitChange_(u){
+  orderUnit = u;
+  const q = document.getElementById('qtyVal');
+  if(q && !qtyTouched) q.value = String(defaultQtyFor_(u));
+}       // unit chosen in the Order form: 'set' | 'pcs' | 'box'
 
 // Preset sizes shown in a tap-to-filter dropdown in Add Design. Staff can also
 // type any other size manually — this list is just for quick selection.
@@ -581,7 +590,7 @@ const I18N = {
     app_title:'Subhash Sales Agencies',
     nav_order:'Order', nav_article:'Article', nav_dispatched:'Dispatched', nav_pending:'Pending',
     nav_customers:'Customers', nav_deleted:'Deleted', nav_activity:'Activity', nav_approvals:'Approvals',
-    pending_sets:'Pending', sets:'Sets', set:'Set', switch_btn:'Switch',
+    pending_sets:'Pending', sets:'Sets', set:'Set', pcs:'Pcs', box:'Box', switch_btn:'Switch',
 
     login_title:'Staff Login',
     login_sub_google:'Enter your name, then sign in with your Google account. A new sign-in needs one-time approval from the owner before you can use the app.',
@@ -673,7 +682,7 @@ const I18N = {
     app_title:'सुभाष सेल्स एजेंसीज',
     nav_order:'ऑर्डर', nav_article:'आर्टिकल', nav_dispatched:'डिस्पैच', nav_pending:'पेंडिंग',
     nav_customers:'ग्राहक', nav_deleted:'डिलीटेड', nav_activity:'एक्टिविटी', nav_approvals:'अप्रूवल्स',
-    pending_sets:'पेंडिंग', sets:'सेट', set:'सेट', switch_btn:'स्विच',
+    pending_sets:'पेंडिंग', sets:'सेट', set:'सेट', pcs:'पीस', box:'बॉक्स', switch_btn:'स्विच',
 
     login_title:'स्टाफ लॉगिन',
     login_sub_google:'पहले अपना नाम लिखें, फिर अपने Google अकाउंट से साइन इन करें। नए साइन-इन को इस्तेमाल करने से पहले मालिक की एक बार मंज़ूरी लेनी होगी।',
@@ -808,20 +817,88 @@ const COMPANY_NAME = 'Subhash Sales Agencies';
 const COMPANY_ADDRESS = '143 - P HUKUMCHAND MARKET IMLI BAZAR ROAD, INDORE - 452007';
 const COMPANY_CONTACT = '9425410337 - 9425410338, Email : Subhashsalesagencies@gmail.com';
 
+/* ---------- Order unit: Set / Pcs / Box ----------
+   Every booking can carry a `unit` ('set' | 'pcs' | 'box'). Old bookings have no
+   unit and are treated as 'set', so nothing existing changes. */
+const UNIT_KEYS = ['set','pcs','box'];
+const UNIT_EN = { set:'Set', pcs:'Pcs', box:'Box' };
+function unitOf_(x){ const u = x && x.unit; return UNIT_EN[u] ? u : 'set'; }
+function unitEn_(u){ return UNIT_EN[u] || 'Set'; }
+function unitUi_(u, plural){ if(u==='pcs') return t('pcs'); if(u==='box') return t('box'); return plural ? t('sets') : t('set'); }
+function sumByUnit_(items){
+  const m = {};
+  (items||[]).forEach(x=>{ const u = unitOf_(x); m[u] = (m[u]||0) + (Number(x.qty)||0); });
+  return m;
+}
+// "5 Set + 10 Pcs" (English, for PDFs)
+function totalsPdf_(items){
+  const m = sumByUnit_(items);
+  const parts = UNIT_KEYS.filter(u=>m[u]).map(u=>`${m[u]} ${unitEn_(u)}`);
+  return parts.length ? parts.join(' + ') : '0 Set';
+}
+// Same, in the app language (screen + WhatsApp text)
+function totalsUi_(items){
+  const m = sumByUnit_(items);
+  const parts = UNIT_KEYS.filter(u=>m[u]).map(u=>`${m[u]} ${unitUi_(u, true)}`);
+  return parts.length ? parts.join(' + ') : `0 ${t('sets')}`;
+}
+// Plain number when everything is in Sets (looks exactly like before), full text otherwise
+function totalsShort_(items){
+  const m = sumByUnit_(items);
+  const used = UNIT_KEYS.filter(u=>m[u]);
+  if(!used.length) return '0';
+  if(used.length===1 && used[0]==='set') return String(m.set);
+  return totalsUi_(items);
+}
+function qtyUi_(b){ return `${b.qty} ${unitUi_(unitOf_(b))}`; }                 // "1 Set" / "1 Pcs" / "1 Box"
+function qtyShort_(b){ const u = unitOf_(b); return u==='set' ? String(b.qty) : `${b.qty} ${unitUi_(u)}`; }
+// PDF / Excel quantity column: header is the unit when every row has the same unit, else "Qty"
+function unitHdr_(items){
+  const us = new Set((items||[]).map(unitOf_));
+  if(us.size===0) return 'Set';
+  return us.size===1 ? unitEn_([...us][0]) : 'Qty';
+}
+function qtyCell_(x, hdr){ return hdr==='Qty' ? `${x.qty} ${unitEn_(unitOf_(x))}` : String(x.qty); }
+function xlQty_(x, hdr){ return hdr==='Qty' ? `${x.qty} ${unitEn_(unitOf_(x))}` : x.qty; }
+function xlTotal_(items){
+  const m = sumByUnit_(items); const used = UNIT_KEYS.filter(u=>m[u]);
+  return used.length<=1 ? (used.length ? m[used[0]] : 0) : totalsPdf_(items);
+}
+function xlHdr_(prefix, hdr){ return hdr==='Set' ? `${prefix} Sets` : `${prefix} ${hdr}`; }
+function unitSelectHtml_(id, cur, style, onchange){
+  return `<select id="${id}" ${onchange ? `onchange="${onchange}"` : ''} style="${style||''}">${UNIT_KEYS.map(u=>`<option value="${u}" ${u===cur?'selected':''}>${unitUi_(u)}</option>`).join('')}</select>`;
+}
+
+// Amount of one line = Qty x Price per pc, counted only for lines ordered in Pcs
+// (a Set / Box has no fixed pcs count, so no amount can be worked out for it).
+function rowAmount_(b){
+  if(unitOf_(b)!=='pcs') return 0;
+  const pr = parseFloat(b.pricePerPcs);
+  return (pr > 0 && b.qty > 0) ? Math.round(pr * b.qty * 100) / 100 : 0;
+}
+function fmtAmt_(n){ return (Math.round(n * 100) / 100).toLocaleString('en-IN', { maximumFractionDigits: 2 }); }
+// " | Total Amount: Rs 1,200" for the PDF footer (empty when the order has no pcs amount)
+function amtFooter_(pp){ return pp && pp.hasAmount ? `   |   Total Amount: Rs ${fmtAmt_(pp.amountTotal)}` : ''; }
+
 // Adds a "Price" column to an order PDF, but only when at least one line in
-// it actually has a price — orders for brands that don't use prices keep
-// their PDFs exactly as before. tableRows[i] must correspond to srcRows[i].
+// it actually has a price. When some lines are in Pcs it also adds an "Amount (Rs)"
+// column (Qty x Price) and returns the order's total amount.
+// tableRows[i] must correspond to srcRows[i].
 function pdfWithPrice_(columns, tableRows, srcRows, afterCol){
-  if(!srcRows.some(b=>b.pricePerPcs)) return { columns: columns, tableRows: tableRows };
+  if(!srcRows.some(b=>b.pricePerPcs)) return { columns: columns, tableRows: tableRows, hasAmount:false, amountTotal:0 };
+  const hasAmount = srcRows.some(b=>rowAmount_(b) > 0);
+  const amountTotal = srcRows.reduce((s,b)=>s+rowAmount_(b),0);
   const idx = columns.indexOf(afterCol) + 1;
   const cols = columns.slice();
   cols.splice(idx, 0, 'Price (Rs)');
+  if(hasAmount) cols.splice(idx + 1, 0, 'Amount (Rs)');
   const rows = tableRows.map((r,i)=>{
     const c = r.slice();
     c.splice(idx, 0, srcRows[i].pricePerPcs ? String(srcRows[i].pricePerPcs) : '-');
+    if(hasAmount){ const a = rowAmount_(srcRows[i]); c.splice(idx + 1, 0, a ? fmtAmt_(a) : '-'); }
     return c;
   });
-  return { columns: cols, tableRows: rows };
+  return { columns: cols, tableRows: rows, hasAmount, amountTotal };
 }
 
 function buildPdfBlob(title, subtitle, columns, rows, footerText, extraOpts){
@@ -1533,11 +1610,11 @@ function detectNewOrders_(list){
     if(b.status !== 'pending' || b.trashed || b.addedLater) return;
     if(Date.now() - new Date(b.orderedAt).getTime() > 6*60*60*1000) return; // ignore old orders arriving late
     const key = b.customerName + '|' + b.orderedAt;
-    if(!groups[key]) groups[key] = { key:key, customer:b.customerName, brand:b.brand, by:(ob && ob.name) || '', sets:0 };
-    groups[key].sets += b.qty;
+    if(!groups[key]) groups[key] = { key:key, customer:b.customerName, brand:b.brand, by:(ob && ob.name) || '', items:[] };
+    groups[key].items.push({ qty:b.qty, unit:unitOf_(b) });
   });
   Object.values(groups).forEach(g=>{
-    showOrderNotification_(t('new_order_title'), `${g.customer}${g.brand ? ' ('+g.brand+')' : ''} · ${g.sets} ${t('sets')}${g.by ? ' · ' + g.by : ''}`, 'ssa-' + g.key);
+    showOrderNotification_(t('new_order_title'), `${g.customer}${g.brand ? ' ('+g.brand+')' : ''} · ${totalsUi_(g.items)}${g.by ? ' · ' + g.by : ''}`, 'ssa-' + g.key);
   });
 }
 
@@ -1618,7 +1695,7 @@ function sendOrderPush_(cust, brand, sets, orderedAt){
       action: 'sendOrderPush',
       senderToken: myPushToken_ || '',
       title: 'New Order',
-      body: `${cust}${brand ? ' ('+brand+')' : ''} · ${sets} Sets${currentStaff ? ' · ' + currentStaff.name : ''}`,
+      body: `${cust}${brand ? ' ('+brand+')' : ''} · ${sets}${currentStaff ? ' · ' + currentStaff.name : ''}`,
       tag: 'ssa-' + cust + '|' + orderedAt
     }).catch(()=>{});
   }catch(e){}
@@ -1689,10 +1766,10 @@ function openShareApp(){
 function renderTopbarRight(){
   const el = document.getElementById('topbarRight');
   if(!currentStaff){ el.innerHTML = ''; return; }
-  const pending = bookings.filter(b=>b.status==='pending' && !b.trashed).reduce((s,b)=>s+b.qty,0);
+  const pendingRows_ = bookings.filter(b=>b.status==='pending' && !b.trashed);
   el.innerHTML = `
     <span id="syncBadge" class="sync-badge"></span>
-    <span class="closing-badge">${t('pending_sets')}: ${pending} ${t('sets')}</span>
+    <span class="closing-badge">${t('pending_sets')}: ${totalsUi_(pendingRows_)}</span>
     <span class="staff-badge">👤 ${escapeHtml(currentStaff.name)} <button onclick="logoutStaff()">${t('switch_btn')}</button></span>
   `;
   updateSyncBadge_();
@@ -2037,7 +2114,7 @@ function handleOrderFormArrowNav(e, fieldId){
 
 function renderBook(main){
   const cartBlocks = draftCart.map((d, idx)=>{
-    const chips = d.sizes.map((s,si)=>`<span class="chip">${escapeHtml(s.size)} · ${s.qty}${s.price ? ' · ₹'+escapeHtml(String(s.price)) : ''} <button class="x" onclick="removeCartSize(${idx},${si})">×</button></span>`).join('');
+    const chips = d.sizes.map((s,si)=>`<span class="chip">${escapeHtml(s.size)} · ${s.qty} ${unitUi_(unitOf_(s))}${s.price ? ' · ₹'+escapeHtml(String(s.price)) : ''}${(unitOf_(s)==='pcs' && parseFloat(s.price)>0) ? ' = ₹'+fmtAmt_(s.qty*parseFloat(s.price)) : ''} <button class="x" onclick="removeCartSize(${idx},${si})">×</button></span>`).join('');
     return `<div class="design-block">
       <div class="dhead"><span>${t('design_word')} No. ${escapeHtml(d.designNumber)}${d.colour ? ' · '+escapeHtml(d.colour) : ''}</span>
       <button class="chip x" style="border:none;background:none;color:var(--rust);font-weight:700;" onclick="removeCartDesign(${idx})">${t('remove')} ✕</button></div>
@@ -2072,8 +2149,8 @@ function renderBook(main){
       <div class="row">
         <input id="sizeVal" class="field-mustard" placeholder="${t('size_ph')}" autocomplete="off" value="${escapeHtml(tempSizeText)}" oninput="tempSizeText=this.value" onkeydown="if(event.key==='Enter'){event.preventDefault();addTempSize();}else{handleOrderFormArrowNav(event,'sizeVal')}">
         <div style="max-width:80px;">
-          <label>${t('set')}</label>
-          <input id="qtyVal" type="number" min="1" value="1" onkeydown="if(event.key==='Enter'){event.preventDefault();addTempSize();}else{handleOrderFormArrowNav(event,'qtyVal')}">
+          ${unitSelectHtml_('unitVal', orderUnit, "width:100%;padding:2px 0;margin:0 0 6px;font-size:13px;font-weight:700;color:var(--navy);border:none;border-bottom:1.5px dashed var(--navy);background:transparent;border-radius:0;cursor:pointer;", "onUnitChange_(this.value)")}
+          <input id="qtyVal" type="number" min="1" value="${qtyTouched ? 1 : defaultQtyFor_(orderUnit)}" oninput="qtyTouched=true" onkeydown="if(event.key==='Enter'){event.preventDefault();addTempSize();}else{handleOrderFormArrowNav(event,'qtyVal')}">
         </div>
       </div>
       <div style="font-size:12px;color:#7e8896;margin-top:4px;">${t('size_add_hint')}</div>
@@ -2457,6 +2534,9 @@ function addTempSize(){
   const price = priceInput ? priceInput.value.trim() : '';
   const rawSize = sizeInput.value.trim();
   const qty = parseInt(qtyInput.value) || 0;
+  const unitEl = document.getElementById('unitVal');
+  const unit = unitEl ? unitEl.value : orderUnit;
+  orderUnit = unit;
   const msg = document.getElementById('bookMsg');
   if(!designNo){ msg.innerHTML = `<div class="msg err">${t('enter_design_err')}</div>`; return; }
   // Several sizes can be typed in one go, separated by spaces and/or commas
@@ -2499,7 +2579,7 @@ function addTempSize(){
       entry = { designNumber: designNo, colour: col, sizes: [] };
       draftCart.push(entry);
     }
-    entry.sizes.push({ size, qty, price });
+    entry.sizes.push({ size, qty, price, unit });
   });
 
   // After "+": the Size stays as typed (change it by hand when needed) and the
@@ -2507,7 +2587,8 @@ function addTempSize(){
   tempSizeText = sizeInput.value;
   tempColour = '';
   if(colourInput) colourInput.value = '';
-  qtyInput.value = '1';
+  qtyTouched = false;
+  qtyInput.value = String(defaultQtyFor_(orderUnit));
   msg.innerHTML = '';
   render();
   // Cursor goes back to Design Number (not Size) — the common next step is
@@ -2573,6 +2654,7 @@ async function saveOrder(){
           colour: d.colour || '',
           size: s.size,
           qty: s.qty,
+          unit: unitOf_(s),
           pricePerPcs: s.price || '',
           status: 'pending',
           orderedAt: now,
@@ -2589,12 +2671,13 @@ async function saveOrder(){
     // it only sometimes went straight to WhatsApp.
     const savePromise = saveData();
     const justSavedRows = bookings.filter(b=>b.customerName===custName && b.orderedAt===now);
+    const totalsTxt = totalsPdf_(justSavedRows);
     const sharePromise = shareNewOrderPdf(custName, justSavedRows, totalSets);
     await savePromise;
 
     const count = draftCart.length;
-    await logActivity('Order Booked', `${custName}${custBrand ? ' ('+custBrand+')' : ''} — ${count} design(s), ${totalSets} sets`);
-    sendOrderPush_(custName, custBrand, totalSets, now);
+    await logActivity('Order Booked', `${custName}${custBrand ? ' ('+custBrand+')' : ''} — ${count} design(s), ${totalsTxt}`);
+    sendOrderPush_(custName, custBrand, totalsTxt, now);
 
     draftCart = [];
     draftCustomer = '';
@@ -2605,6 +2688,7 @@ async function saveOrder(){
     tempSizeText = '';
     tempPrice = '';
     tempSizes = [];
+    qtyTouched = false;
     render();
     const m2 = document.getElementById('bookMsg');
     if(m2) m2.innerHTML = `<div class="msg ok">${count} ${t('designs_saved')}</div>`;
@@ -2625,13 +2709,14 @@ function pdfNamePart_(txt, firstWordOnly){
 
 async function shareNewOrderPdf(cname, rows, total){
   if(!rows.length) return;
-  const tableRows = rows.map(b=>[b.designNumber, b.colour||'-', b.size, b.brand||'-', String(b.qty)]);
-  const pp = pdfWithPrice_(['Design Number','Colour','Size','Brand','Set'], tableRows, rows, 'Set');
-  const blob = buildPdfBlob(`${cname}`, `Subhash Sales Agencies · ${new Date().toLocaleDateString('en-IN')}`, pp.columns, pp.tableRows, `${t('total')}: ${total} ${t('sets')}`, { heading: 'Order' });
+  const hdr = unitHdr_(rows);
+  const tableRows = rows.map(b=>[b.designNumber, b.colour||'-', b.size, b.brand||'-', qtyCell_(b, hdr)]);
+  const pp = pdfWithPrice_(['Design Number','Colour','Size','Brand',hdr], tableRows, rows, hdr);
+  const blob = buildPdfBlob(`${cname}`, `Subhash Sales Agencies · ${new Date().toLocaleDateString('en-IN')}`, pp.columns, pp.tableRows, `${t('total')}: ${totalsPdf_(rows)}${amtFooter_(pp)}`, { heading: 'Order' });
   if(!blob) return;
   const brandPart = pdfNamePart_(rows[0].brand, true);
   const fileName = `Order_${pdfNamePart_(cname, false) || 'CUSTOMER'}${brandPart ? '_'+brandPart : ''}.pdf`;
-  await sharePdfBlob(blob, fileName, `Order — ${cname}`, `New Order — ${cname}, ${t('total')} ${total} ${t('sets')}`);
+  await sharePdfBlob(blob, fileName, `Order — ${cname}`, `New Order — ${cname}, ${t('total')} ${totalsUi_(rows)}`);
 }
 
 /* ---------------- ARTICLE (DISPATCH) SEARCH TAB ---------------- */
@@ -2671,8 +2756,8 @@ function buildBrandGroups_(matches){
     const d = dmap[dk] || (dmap[dk] = { design: String(b.designNumber).trim(), colours: {} });
     const ck = normKey_(b.colour);
     const c = d.colours[ck] || (d.colours[ck] = { colour: String(b.colour||'').trim().toUpperCase(), sizes: {} });
-    const sk = normKey_(b.size);
-    const s = c.sizes[sk] || (c.sizes[sk] = { size: String(b.size||'-').trim(), pending: 0, dispatched: 0, lines: [] });
+    const sk = normKey_(b.size) + '|' + unitOf_(b);
+    const s = c.sizes[sk] || (c.sizes[sk] = { size: String(b.size||'-').trim(), unit: unitOf_(b), pending: 0, dispatched: 0, lines: [] });
     s[b.status==='dispatched' ? 'dispatched' : 'pending'] += b.qty;
     s.lines.push(b);
   });
@@ -2682,7 +2767,7 @@ function buildBrandGroups_(matches){
       design: d.design,
       colours: Object.values(d.colours)
         .sort((a,b)=> natCmp_(a.colour,b.colour))
-        .map(c=>({ colour: c.colour, sizes: Object.values(c.sizes).sort((a,b)=> natCmp_(a.size,b.size)) }))
+        .map(c=>({ colour: c.colour, sizes: Object.values(c.sizes).sort((a,b)=> natCmp_(a.size,b.size) || UNIT_KEYS.indexOf(a.unit)-UNIT_KEYS.indexOf(b.unit)) }))
     }));
 }
 
@@ -2703,15 +2788,15 @@ function buildCustomerPendingGroups_(matches){
   matches.forEach(b=>{
     if(b.status === 'dispatched' || b.trashed) return;
     const ck = normKey_(b.customerName);
-    const c = map[ck] || (map[ck] = { customer: String(b.customerName||'').trim(), total: 0, lines: {} });
-    const lk = normKey_(b.designNumber) + '|' + normKey_(b.colour) + '|' + normKey_(b.size);
-    const l = c.lines[lk] || (c.lines[lk] = { design: String(b.designNumber).trim(), colour: String(b.colour||'').trim().toUpperCase(), size: String(b.size||'-').trim(), qty: 0 });
-    l.qty += b.qty; c.total += b.qty;
+    const c = map[ck] || (map[ck] = { customer: String(b.customerName||'').trim(), total: 0, items: [], lines: {} });
+    const lk = normKey_(b.designNumber) + '|' + normKey_(b.colour) + '|' + normKey_(b.size) + '|' + unitOf_(b);
+    const l = c.lines[lk] || (c.lines[lk] = { design: String(b.designNumber).trim(), colour: String(b.colour||'').trim().toUpperCase(), size: String(b.size||'-').trim(), unit: unitOf_(b), qty: 0 });
+    l.qty += b.qty; c.total += b.qty; c.items.push({ qty: b.qty, unit: unitOf_(b) });
   });
   return Object.values(map)
     .sort((a,b)=> String(a.customer).localeCompare(String(b.customer)))
     .map(c=>({
-      customer: c.customer, total: c.total,
+      customer: c.customer, total: c.total, items: c.items,
       lines: Object.values(c.lines).sort((a,b)=> natCmp_(a.design,b.design) || natCmp_(a.colour,b.colour) || natCmp_(a.size,b.size))
     }));
 }
@@ -2776,8 +2861,8 @@ function renderDispatch(main){
     if(hasCustQuery){
       matches = matches.filter(b=>(b.customerName||'').toLowerCase().includes(custQl));
     }
-    const pendingQty = matches.filter(b=>b.status==='pending').reduce((s,b)=>s+b.qty,0);
-    const doneQty = matches.filter(b=>b.status==='dispatched').reduce((s,b)=>s+b.qty,0);
+    const pendingQty = totalsShort_(matches.filter(b=>b.status==='pending'));
+    const doneQty = totalsShort_(matches.filter(b=>b.status==='dispatched'));
 
     const customers = [...new Set(matches.map(b=>b.customerName))];
     const custCards = customers.length ? customers.map(cname=>{
@@ -2807,7 +2892,7 @@ function renderDispatch(main){
         const [colour, brand] = key.split('||');
         const chips = groups[key].map(b=>{
           const done = b.status==='dispatched';
-          return `<button class="size-btn ${done?'done':''}" ${done?'disabled':''} onclick="dispatchOne('${b.id}')">${escapeHtml(b.size)} · ${b.qty}${done?' ✓':''}</button>`;
+          return `<button class="size-btn ${done?'done':''}" ${done?'disabled':''} onclick="dispatchOne('${b.id}')">${escapeHtml(b.size)} · ${qtyShort_(b)}${done?' ✓':''}</button>`;
         }).join('');
         let labelText = '';
         if(colour && brand) labelText = `${colour} · ${brand}`;
@@ -2849,7 +2934,7 @@ function renderDispatch(main){
       const showGroupLabels = groupKeys.length > 1 || (groupKeys.length===1 && groupKeys[0] !== '||');
       const groupsHtml = groupKeys.map(key=>{
         const [colour, brand] = key.split('||');
-        const chips = groups[key].map(b=>`<span class="size-btn done">${escapeHtml(b.size)} · ${b.qty}</span>`).join('');
+        const chips = groups[key].map(b=>`<span class="size-btn done">${escapeHtml(b.size)} · ${qtyShort_(b)}</span>`).join('');
         let labelText = '';
         if(colour && brand) labelText = `${colour} · ${brand}`;
         else if(colour) labelText = colour;
@@ -2903,21 +2988,24 @@ function renderDispatch(main){
       if(!custGroups.length){
         resultsHtml = `<div class="empty">${t('no_pending_brand')}</div>`;
       } else {
-        const totAll = custGroups.reduce((s,c)=>s+c.total,0);
+        const totAll = totalsUi_(custGroups.flatMap(c=>c.items));
         const custCards = custGroups.map(c=>`<div class="cust-card">
-          <div class="cust-head"><span class="name">${escapeHtml(c.customer)}</span><span><span class="set-pill pending">${c.total} ${t('sets')}</span></span></div>
-          ${c.lines.map(l=>`<div class="item-line"><span>${escapeHtml(l.design)}${l.colour ? ' · ' + escapeHtml(l.colour) : ''} · ${escapeHtml(l.size)}</span><span>${l.qty} ${t('set')}</span></div>`).join('')}
+          <div class="cust-head"><span class="name">${escapeHtml(c.customer)}</span><span><span class="set-pill pending">${totalsUi_(c.items)}</span></span></div>
+          ${c.lines.map(l=>`<div class="item-line"><span>${escapeHtml(l.design)}${l.colour ? ' · ' + escapeHtml(l.colour) : ''} · ${escapeHtml(l.size)}</span><span>${l.qty} ${unitUi_(l.unit)}</span></div>`).join('')}
         </div>`).join('');
-        resultsHtml = brandActionsCard_(`${custGroups.length} ${t('nav_customers')} · ${totAll} ${t('sets')} (${t('badge_pending')})`) + custCards;
+        resultsHtml = brandActionsCard_(`${custGroups.length} ${t('nav_customers')} · ${totAll} (${t('badge_pending')})`) + custCards;
       }
     } else if(!groups.length){
       resultsHtml = `<div class="empty">${t('no_pending_brand')}</div>`;
     } else {
-      let totPend = 0, totDone = 0;
+      const totPendItems = [], totDoneItems = [];
       const articleCards = groups.map(g=>{
-        let gPend = 0, gDone = 0;
-        g.colours.forEach(c=>c.sizes.forEach(s=>{ gPend += s.pending; gDone += s.dispatched; }));
-        totPend += gPend; totDone += gDone;
+        const gPendItems = [], gDoneItems = [];
+        g.colours.forEach(c=>c.sizes.forEach(s=>{
+          if(s.pending) gPendItems.push({ qty: s.pending, unit: s.unit });
+          if(s.dispatched) gDoneItems.push({ qty: s.dispatched, unit: s.unit });
+        }));
+        totPendItems.push(...gPendItems); totDoneItems.push(...gDoneItems);
         const showColourLabels = g.colours.length > 1 || (g.colours.length===1 && g.colours[0].colour !== '');
 
         const colourSections = g.colours.map(c=>{
@@ -2928,16 +3016,16 @@ function renderDispatch(main){
             flat.sort((a,b)=> natCmp_(a.size,b.size) || (a.status===b.status?0:(a.status==='pending'?-1:1)) || String(a.customerName).localeCompare(String(b.customerName)));
             lines = flat.map(b=>{
               const done = b.status==='dispatched';
-              return `<div class="item-line"><span>${escapeHtml(b.customerName)} · ${escapeHtml(b.size)}</span><span>${b.qty} ${t('set')} · <span class="${done?'st-done':'st-pend'}">${done ? t('dispatched')+' ✓' : t('badge_pending')}</span></span></div>`;
+              return `<div class="item-line"><span>${escapeHtml(b.customerName)} · ${escapeHtml(b.size)}</span><span>${qtyUi_(b)} · <span class="${done?'st-done':'st-pend'}">${done ? t('dispatched')+' ✓' : t('badge_pending')}</span></span></div>`;
             }).join('');
           } else {
-            lines = c.sizes.map(s=>`<div class="item-line"><span>${escapeHtml(s.size)}</span><span>${s.pending} ${t('set')}</span></div>`).join('');
+            lines = c.sizes.map(s=>`<div class="item-line"><span>${escapeHtml(s.size)}</span><span>${s.pending} ${unitUi_(s.unit)}</span></div>`).join('');
           }
           const label = showColourLabels ? `<div class="colour-label">${escapeHtml(c.colour || t('no_colour'))}</div>` : '';
           return `${label}${lines}`;
         }).join('');
 
-        const pills = `<span class="set-pill pending">${gPend} ${t('sets')}</span>` + (isDetail && gDone ? ` <span class="set-pill done">${t('dispatched')}: ${gDone}</span>` : '');
+        const pills = `<span class="set-pill pending">${totalsUi_(gPendItems)}</span>` + (isDetail && gDoneItems.length ? ` <span class="set-pill done">${t('dispatched')}: ${totalsShort_(gDoneItems)}</span>` : '');
         return `<div class="cust-card">
           <div class="cust-head"><span class="name">${t('article')}: ${escapeHtml(g.design)}</span><span>${pills}</span></div>
           ${colourSections}
@@ -2945,8 +3033,8 @@ function renderDispatch(main){
       }).join('');
 
       const countLine = isDetail
-        ? `${groups.length} ${t('articles_word')} · ${t('badge_pending')}: ${totPend} · ${t('dispatched')}: ${totDone}`
-        : `${groups.length} ${t('articles_word')} · ${totPend} ${t('sets')} (${t('badge_pending')})`;
+        ? `${groups.length} ${t('articles_word')} · ${t('badge_pending')}: ${totalsShort_(totPendItems)} · ${t('dispatched')}: ${totalsShort_(totDoneItems)}`
+        : `${groups.length} ${t('articles_word')} · ${totalsUi_(totPendItems)} (${t('badge_pending')})`;
 
       resultsHtml = brandActionsCard_(countLine) + articleCards;
     }
@@ -3011,15 +3099,16 @@ function printBrandOverview(){
   if(dispatchBrandView === 'customer'){
     const custGroups = buildCustomerPendingGroups_(matches);
     if(!custGroups.length){ alert(t('no_pending_brand')); return; }
+    const hdrC = unitHdr_(custGroups.flatMap(c=>c.lines));
     const bl = brandLabel;
     const rowsC = [], labelsC = [], headsC = []; let totC = 0;
     const headStyleC = { fillColor:[222,234,250], textColor:[22,86,166], fontStyle:'bold', fontSize:12 };
     custGroups.forEach(c=>{
       totC += c.total;
-      rowsC.push([{ content: `${c.customer}      (${c.total} Set)`, colSpan: 4, styles: headStyleC }]);
+      rowsC.push([{ content: `${c.customer}      (${totalsPdf_(c.items)})`, colSpan: 4, styles: headStyleC }]);
       labelsC.push(c.customer); headsC.push(true);
       c.lines.forEach(l=>{
-        rowsC.push([ l.design, l.colour || '-', l.size, { content: String(l.qty), styles:{ fontStyle:'bold', halign:'center' } } ]);
+        rowsC.push([ l.design, l.colour || '-', l.size, { content: qtyCell_(l, hdrC), styles:{ fontStyle:'bold', halign:'center' } } ]);
         labelsC.push(c.customer); headsC.push(false);
       });
     });
@@ -3027,8 +3116,8 @@ function printBrandOverview(){
     if(dispatchFromDate || dispatchToDate){
       dateNoteC = ` | ${dispatchFromDate ? dispatchDateLabel(dispatchFromDate) : '...'} - ${dispatchToDate ? dispatchDateLabel(dispatchToDate) : '...'}`;
     }
-    const blobC = buildPdfBlob(`Order to - ${bl}`, `Subhash Sales Agencies | ${new Date().toLocaleDateString('en-IN')}${dateNoteC}`,
-      ['Article','Colour','Size','Pending Set'], rowsC, `Total Pending: ${totC} Set`,
+    const blobC = buildPdfBlob(`Order to - ${bl}`, `Date : ${todayTxt}${dateNoteC}`,
+      ['Article','Colour','Size',`Pending ${hdrC}`], rowsC, `Total Pending: ${totalsPdf_(custGroups.flatMap(c=>c.items))}`,
       { styles:{ fontSize:11, cellPadding:3.2 }, columnStyles:{ 3:{ halign:'center', cellWidth:35 } },
         heading: 'Customer-Wise Details',
         continuation: { labels: labelsC, isHeading: headsC,
@@ -3043,19 +3132,17 @@ function printBrandOverview(){
   if(dispatchBrandView === 'detail'){
     const sorted = matches.slice().sort((a,b)=> a.designNumber.localeCompare(b.designNumber) || (a.colour||'').localeCompare(b.colour||'') || a.customerName.localeCompare(b.customerName));
     const hasPriceD = sorted.some(b=>b.pricePerPcs);
+    const hdrD = unitHdr_(sorted);
     const colsD = ['Article','Colour','Customer','Order Date','Size'];
     if(hasPriceD) colsD.push('Price (Rs)');
-    colsD.push('Pending Set','Dispatched Set');
-    let pendAll = 0, doneAll = 0;
+    colsD.push(`Pending ${hdrD}`,`Dispatched ${hdrD}`);
     const rowsD = sorted.map(b=>{
       const done = b.status==='dispatched';
-      if(done) doneAll += b.qty; else pendAll += b.qty;
       const r = [b.designNumber, b.colour||'-', b.customerName, dispatchDateLabel(dispatchDateKey(b.orderedAt)), b.size];
       if(hasPriceD) r.push(b.pricePerPcs ? String(b.pricePerPcs) : '-');
-      r.push(done ? '' : String(b.qty), done ? String(b.qty) : '');
+      r.push(done ? '' : qtyCell_(b, hdrD), done ? qtyCell_(b, hdrD) : '');
       return r;
     });
-    const totalSetsAll = pendAll + doneAll;
     const ppD = { columns: colsD, tableRows: rowsD };
     const setColStart = colsD.length - 2;
     const colStylesD = {}; colStylesD[setColStart] = { halign:'center' }; colStylesD[setColStart+1] = { halign:'center' };
@@ -3064,7 +3151,7 @@ function printBrandOverview(){
       dateNoteD = ` | ${dispatchFromDate ? dispatchDateLabel(dispatchFromDate) : '…'} - ${dispatchToDate ? dispatchDateLabel(dispatchToDate) : '…'}`;
     }
     const titleD = `Order to - ${brandLabel}`;
-    const blobD = buildPdfBlob(titleD, `Subhash Sales Agencies | ${todayTxt}${dateNoteD}`, ppD.columns, ppD.tableRows, `Pending: ${pendAll} Set   |   Dispatched: ${doneAll} Set   |   ${t('total')}: ${totalSetsAll} Set`, { columnStyles: colStylesD, heading: 'Article-Wise Details' });
+    const blobD = buildPdfBlob(titleD, `Date : ${todayTxt}${dateNoteD}`, ppD.columns, ppD.tableRows, `Pending: ${totalsPdf_(sorted.filter(b=>b.status!=='dispatched'))}   |   Dispatched: ${totalsPdf_(sorted.filter(b=>b.status==='dispatched'))}   |   ${t('total')}: ${totalsPdf_(sorted)}`, { columnStyles: colStylesD, heading: 'Article-Wise Details' });
     if(!blobD){ alert(t('pdf_gen_fail')); return; }
     showPdfActions_(blobD, `Brand-Customerwise-${bq.replace(/[^a-z0-9]/gi,'_')}.pdf`, titleD, `*${titleD}*`);
     return;
@@ -3078,6 +3165,9 @@ function printBrandOverview(){
   // The article number is written once on its first row; the rows below it show "=" (same
   // article) until that article's rows end. A row that starts a new page shows the number again.
   const rows = [], rowArticle = [], rowFirst = [];
+  const totalItems = [];
+  groups.forEach(g=>g.colours.forEach(c=>c.sizes.forEach(s=>totalItems.push({ qty: s.pending, unit: s.unit }))));
+  const hdrS = unitHdr_(totalItems);
   let total = 0, artIdx = 0;
   groups.forEach(g=>{
     const light = (artIdx++ % 2 === 1);                  // alternate articles get a light tint
@@ -3089,7 +3179,7 @@ function printBrandOverview(){
         { content: first ? g.design : '=', styles: Object.assign({ fontStyle: first ? 'bold' : 'normal', halign: first ? 'left' : 'center' }, fill) },
         { content: c.colour || '-', styles: fill },
         { content: s.size, styles: fill },
-        { content: `${s.pending} Set`, styles: Object.assign({ fontStyle:'bold', halign:'center' }, fill) }
+        { content: `${s.pending} ${unitEn_(s.unit)}`, styles: Object.assign({ fontStyle:'bold', halign:'center' }, fill) }
       ]);
       rowArticle.push(g.design); rowFirst.push(first);
       first = false;
@@ -3103,10 +3193,10 @@ function printBrandOverview(){
   // Brand name exactly as saved on the orders (e.g. "Spring kids"), if all matches share one spelling
   const blob = buildPdfBlob(
     `Order to - ${brandLabel}`,
-    `Subhash Sales Agencies | ${new Date().toLocaleDateString('en-IN')}${dateNote}`,
-    ['Article','Colour','Size','Pending Set'],
+    `Date : ${todayTxt}${dateNote}`,
+    ['Article','Colour','Size', hdrS==='Qty' ? 'Pending Qty' : `Pending ${hdrS}`],
     rows,
-    `Total Pending: ${total} Set`,
+    `Total Pending: ${totalsPdf_(totalItems)}`,
     { styles:{ fontSize:11, cellPadding:3.2 }, columnStyles:{ 0:{ cellWidth:42 }, 3:{ halign:'center', cellWidth:35 } }, heading: 'Size Set-wise Details',
       repeatLabel: { articles: rowArticle, isFirst: rowFirst, col: 0 } }
   );
@@ -3124,11 +3214,11 @@ function downloadBrandExcel(){
   if(dispatchBrandView === 'customer'){
     const custGroups = buildCustomerPendingGroups_(matches);
     if(!custGroups.length){ alert(t('no_pending_brand')); return; }
-    const cData = [['Customer','Article','Colour','Size','Pending Sets']];
-    let cTot = 0;
-    custGroups.forEach(c=>c.lines.forEach(l=>{ cData.push([c.customer, l.design, l.colour || '-', l.size, l.qty]); cTot += l.qty; }));
+    const hdrXC = unitHdr_(custGroups.flatMap(c=>c.lines));
+    const cData = [['Customer','Article','Colour','Size', xlHdr_('Pending', hdrXC)]];
+    custGroups.forEach(c=>c.lines.forEach(l=>{ cData.push([c.customer, l.design, l.colour || '-', l.size, xlQty_(l, hdrXC)]); }));
     cData.push([]);
-    cData.push(['TOTAL','','','', cTot]);
+    cData.push(['TOTAL','','','', xlTotal_(custGroups.flatMap(c=>c.items))]);
     const wsC = XLSX.utils.aoa_to_sheet(cData);
     wsC['!cols'] = [{wch:28},{wch:14},{wch:16},{wch:12},{wch:14}];
     const wbC = XLSX.utils.book_new();
@@ -3144,21 +3234,20 @@ function downloadBrandExcel(){
     const hasPrice = sorted.some(b=>b.pricePerPcs);
     const head = ['Article','Colour','Customer','Order Date','Size'];
     if(hasPrice) head.push('Price (Rs)');
-    head.push('Pending Sets','Dispatched Sets');
+    const hdrXD = unitHdr_(sorted);
+    head.push(xlHdr_('Pending', hdrXD), xlHdr_('Dispatched', hdrXD));
     const dData = [head];
-    let pT = 0, dT = 0;
     sorted.forEach(b=>{
       const done = b.status==='dispatched';
       const row = [b.designNumber, b.colour||'-', b.customerName, dispatchDateLabel(dispatchDateKey(b.orderedAt)), b.size];
       if(hasPrice) row.push(b.pricePerPcs ? Number(b.pricePerPcs) || String(b.pricePerPcs) : '-');
-      row.push(done ? '' : b.qty, done ? b.qty : '');
-      if(done) dT += b.qty; else pT += b.qty;
+      row.push(done ? '' : xlQty_(b, hdrXD), done ? xlQty_(b, hdrXD) : '');
       dData.push(row);
     });
     dData.push([]);
     const tot = ['TOTAL','','','',''];
     if(hasPrice) tot.push('');
-    tot.push(pT, dT);
+    tot.push(xlTotal_(sorted.filter(b=>b.status!=='dispatched')), xlTotal_(sorted.filter(b=>b.status==='dispatched')));
     dData.push(tot);
     const wsD = XLSX.utils.aoa_to_sheet(dData);
     const cols = [{wch:14},{wch:16},{wch:26},{wch:14},{wch:12}];
@@ -3177,14 +3266,15 @@ function downloadBrandExcel(){
 
   // Sheet 1: only what is still PENDING (what has to be ordered), one clean
   // line per Article + Colour + Size, customers already combined.
-  const pData = [['Article','Colour','Size','Pending Sets']];
-  let pTotal = 0;
+  const pItemsX = [];
+  pend.forEach(g=>g.colours.forEach(c=>c.sizes.forEach(s=>pItemsX.push({ qty: s.pending, unit: s.unit }))));
+  const hdrXP = unitHdr_(pItemsX);
+  const pData = [['Article','Colour','Size', xlHdr_('Pending', hdrXP)]];
   pend.forEach(g=>g.colours.forEach(c=>c.sizes.forEach(s=>{
-    pData.push([g.design, c.colour || '-', s.size, s.pending]);
-    pTotal += s.pending;
+    pData.push([g.design, c.colour || '-', s.size, xlQty_({ qty: s.pending, unit: s.unit }, hdrXP)]);
   })));
   pData.push([]);
-  pData.push(['TOTAL', '', '', pTotal]);
+  pData.push(['TOTAL', '', '', xlTotal_(pItemsX)]);
   const ws = XLSX.utils.aoa_to_sheet(pData);
   ws['!cols'] = [{wch:14},{wch:16},{wch:12},{wch:14}];
   const wb = XLSX.utils.book_new();
@@ -3192,14 +3282,16 @@ function downloadBrandExcel(){
 
   // Sheet 2 (only if something was dispatched): kept separate, so pending and
   // dispatched never get mixed in the same columns.
-  const dData = [['Article','Colour','Size','Dispatched Sets']];
-  let dTotal = 0;
+  const dItemsX = [];
+  all.forEach(g=>g.colours.forEach(c=>c.sizes.forEach(s=>{ if(s.dispatched > 0) dItemsX.push({ qty: s.dispatched, unit: s.unit }); })));
+  const hdrXDs = unitHdr_(dItemsX);
+  const dData = [['Article','Colour','Size', xlHdr_('Dispatched', hdrXDs)]];
   all.forEach(g=>g.colours.forEach(c=>c.sizes.forEach(s=>{
-    if(s.dispatched > 0){ dData.push([g.design, c.colour || '-', s.size, s.dispatched]); dTotal += s.dispatched; }
+    if(s.dispatched > 0){ dData.push([g.design, c.colour || '-', s.size, xlQty_({ qty: s.dispatched, unit: s.unit }, hdrXDs)]); }
   })));
   if(dData.length > 1){
     dData.push([]);
-    dData.push(['TOTAL', '', '', dTotal]);
+    dData.push(['TOTAL', '', '', xlTotal_(dItemsX)]);
     const ws2 = XLSX.utils.aoa_to_sheet(dData);
     ws2['!cols'] = [{wch:14},{wch:16},{wch:12},{wch:16}];
     XLSX.utils.book_append_sheet(wb, ws2, 'Dispatched');
@@ -3331,15 +3423,15 @@ function renderDispatchedOrders(main){
       });
       const custCards = custNamesSorted.map(cname=>{
         const rows = custMap[cname].sort((a,b)=>(a.designNumber).localeCompare(b.designNumber));
-        const total = rows.reduce((s,b)=>s+b.qty,0);
+        const total = totalsUi_(rows);
         const brands = [...new Set(rows.map(b=>b.brand).filter(Boolean))].join(', ');
         const lines = rows.map(b=>
-          `<div class="item-line"><span>${t('design_word')} ${escapeHtml(b.designNumber)}${b.colour?(' · '+escapeHtml(b.colour)):''} · ${escapeHtml(b.size)}</span><span>${b.qty} ${t('set')} <button class="undo-link" onclick="undoDispatch('${b.id}')">${t('undo')}</button></span></div>`
+          `<div class="item-line"><span>${t('design_word')} ${escapeHtml(b.designNumber)}${b.colour?(' · '+escapeHtml(b.colour)):''} · ${escapeHtml(b.size)}</span><span>${qtyUi_(b)} <button class="undo-link" onclick="undoDispatch('${b.id}')">${t('undo')}</button></span></div>`
         ).join('');
         return `<div class="cust-card">
-          <div class="cust-head"><span class="name">${escapeHtml(cname)}${brands ? ` <span class="subtle">(${escapeHtml(brands)})</span>` : ''}</span><span class="set-pill done">${total} ${t('sets')}</span></div>
+          <div class="cust-head"><span class="name">${escapeHtml(cname)}${brands ? ` <span class="subtle">(${escapeHtml(brands)})</span>` : ''}</span><span class="set-pill done">${total}</span></div>
           ${lines}
-          <div class="order-total-line"><span>${t('total')}</span><span>${total} ${t('sets')}</span></div>
+          <div class="order-total-line"><span>${t('total')}</span><span>${total}</span></div>
           <div class="action-row">
             <button class="action-btn wa" onclick="shareWhatsAppDated('${cname.replace(/'/g,"\\'")}','${dk}')">${t('whatsapp')}</button>
             <button class="action-btn pr" onclick="printOrderDated('${cname.replace(/'/g,"\\'")}','${dk}')">${t('print')}</button>
@@ -3403,11 +3495,12 @@ function getDatedRows(cname, dk){
 
 function buildDatedOrderPdf(cname, dk){
   const rows = getDatedRows(cname, dk);
-  const total = rows.reduce((s,b)=>s+b.qty,0);
-  const tableRows = rows.map(b=>[b.designNumber, b.colour||'-', b.size, b.brand||'-', String(b.qty)]);
-  const pp = pdfWithPrice_(['Design Number','Colour','Size','Brand','Set'], tableRows, rows, 'Set');
+  const total = totalsUi_(rows);
+  const hdr = unitHdr_(rows);
+  const tableRows = rows.map(b=>[b.designNumber, b.colour||'-', b.size, b.brand||'-', qtyCell_(b, hdr)]);
+  const pp = pdfWithPrice_(['Design Number','Colour','Size','Brand',hdr], tableRows, rows, hdr);
   return {
-    blob: buildPdfBlob(`${cname}`, `Subhash Sales Agencies · Dispatch Date: ${dispatchDateLabel(dk)}`, pp.columns, pp.tableRows, `Total: ${total} Sets`, { heading: 'Dispatched Order' }),
+    blob: buildPdfBlob(`${cname}`, `Subhash Sales Agencies · Dispatch Date: ${dispatchDateLabel(dk)}`, pp.columns, pp.tableRows, `Total: ${totalsPdf_(rows)}${amtFooter_(pp)}`, { heading: 'Dispatched Order' }),
     total
   };
 }
@@ -3421,7 +3514,7 @@ function printOrderDated(cname, dk){
 async function shareWhatsAppDated(cname, dk){
   const { blob, total } = buildDatedOrderPdf(cname, dk);
   if(!blob){ alert(t('pdf_gen_fail')); return; }
-  await sharePdfBlob(blob, `Order-${cname.replace(/[^a-z0-9]/gi,'_')}-${dk}.pdf`, `Order — ${cname}`, `Order — ${cname} (${dispatchDateLabel(dk)}), Total ${total} Sets`);
+  await sharePdfBlob(blob, `Order-${cname.replace(/[^a-z0-9]/gi,'_')}-${dk}.pdf`, `Order — ${cname}`, `Order — ${cname} (${dispatchDateLabel(dk)}), Total ${total}`);
 }
 
 async function deleteOrderDated(cname, dk){
@@ -3439,6 +3532,18 @@ async function deleteOrderDated(cname, dk){
   });
   await saveData();
   await logActivity('Order Deleted', `${cname} — ${dispatchDateLabel(dk)} — ${total} sets`);
+  render();
+}
+
+// Restores just ONE deleted line (not the whole party).
+async function restoreOne(id){
+  const b = bookings.find(x=>x.id===id);
+  if(!b || !b.trashed) return;
+  markBusy(t('restoring_word'));
+  b.trashed = false;
+  b.trashedAt = null;
+  await saveData();
+  await logActivity('Order Item Restored', `${b.customerName} — Design ${b.designNumber}${b.colour ? ' '+b.colour : ''}, ${b.size} × ${b.qty} ${unitEn_(unitOf_(b))}`);
   render();
 }
 
@@ -3538,7 +3643,7 @@ function renderPendingOrders(main){
     });
     const custCards = custNamesSorted.map(cname=>{
       const rows = custMap[cname].sort((a,b)=>(a.designNumber).localeCompare(b.designNumber));
-      const total = rows.reduce((s,b)=>s+b.qty,0);
+      const total = totalsShort_(rows);
       const isEditing = editingPendingGroup && editingPendingGroup.cname===cname && editingPendingGroup.dk===dk;
 
       if(isEditing){
@@ -3551,6 +3656,7 @@ function renderPendingOrders(main){
             <input id="editColour-${b.id}" value="${escapeHtml(b.colour||'')}" style="width:90px;" placeholder="${t('colour_optional')}">
             <input id="editSize-${b.id}" value="${escapeHtml(b.size)}" style="width:80px;" placeholder="${t('size')}">
             <input id="editQty-${b.id}" type="number" min="1" value="${b.qty}" style="width:60px;">
+            ${unitSelectHtml_(`editUnit-${b.id}`, unitOf_(b), 'width:72px;')}
             <button class="chip x" style="border:none;background:none;color:var(--rust);font-weight:700;" onclick="removePendingEditRow('${b.id}')">✕</button>
           </div>
         `).join('');
@@ -3566,6 +3672,7 @@ function renderPendingOrders(main){
               <input id="editNewColour" placeholder="${t('colour_optional')}" style="width:92px;">
               <input id="editNewSize" placeholder="${t('size')} (2/6 8/16)" style="width:118px;" onkeydown="if(event.key==='Enter'){event.preventDefault();addEditNewLine_();}">
               <input id="editNewQty" type="number" min="1" value="1" style="width:56px;">
+              ${unitSelectHtml_('editNewUnit', 'set', 'width:72px;')}
               <input id="editNewBrand" placeholder="${t('brand_word')}" value="${escapeHtml((rows[0] && rows[0].brand) || '')}" style="width:100px;">
               <input id="editNewPrice" type="number" inputmode="decimal" min="0" placeholder="₹" style="width:64px;">
               <button class="action-btn pr" style="padding:8px 12px;" onclick="addEditNewLine_()">${t('add_line_btn')}</button>
@@ -3582,7 +3689,7 @@ function renderPendingOrders(main){
       const lines = rows.map(b=>
         `<div class="item-line"><span>${t('design_word')} ${escapeHtml(b.designNumber)}${b.colour?(' · '+escapeHtml(b.colour)):''} · ${escapeHtml(b.size)}${b.brand?(' · '+escapeHtml(b.brand)):''}</span>
           <span style="display:inline-flex;align-items:center;gap:8px;">
-            <span>${b.qty} ${t('set')}</span>
+            <span>${qtyUi_(b)}</span>
             <button class="chip" style="cursor:pointer;padding:3px 9px;font-size:11px;border:1px solid var(--navy);background:#fff;color:var(--navy);" onclick="this.disabled=true;this.style.opacity='0.45';this.textContent='...';dispatchOne('${b.id}')">${t('dispatch_btn')}</button>
           </span>
         </div>`
@@ -3613,7 +3720,7 @@ let editNewLines_ = [];      // lines staged in the Pending-edit card, added to 
 let isSavingEdit_ = false;
 
 function editNewListHtml_(){
-  return editNewLines_.map((l,i)=>`<div class="item-line"><span>${t('design_word')} ${escapeHtml(l.design)}${l.colour?(' · '+escapeHtml(l.colour)):''} · ${escapeHtml(l.size)}${l.brand?(' · '+escapeHtml(l.brand)):''}${l.price?(' · ₹'+escapeHtml(String(l.price))):''}</span><span style="display:inline-flex;align-items:center;gap:8px;"><span>${l.qty} ${t('set')}</span><button class="chip x" style="border:none;background:none;color:var(--rust);font-weight:700;" onclick="removeEditNewLine_(${i})">✕</button></span></div>`).join('');
+  return editNewLines_.map((l,i)=>`<div class="item-line"><span>${t('design_word')} ${escapeHtml(l.design)}${l.colour?(' · '+escapeHtml(l.colour)):''} · ${escapeHtml(l.size)}${l.brand?(' · '+escapeHtml(l.brand)):''}${l.price?(' · ₹'+escapeHtml(String(l.price))):''}</span><span style="display:inline-flex;align-items:center;gap:8px;"><span>${l.qty} ${unitUi_(l.unit||'set')}</span><button class="chip x" style="border:none;background:none;color:var(--rust);font-weight:700;" onclick="removeEditNewLine_(${i})">✕</button></span></div>`).join('');
 }
 function refreshEditNewList_(){
   const el = document.getElementById('editNewList');
@@ -3649,6 +3756,7 @@ function addEditNewLine_(){
   const design = val('editNewDesign'), colourRaw = val('editNewColour'), rawSize = val('editNewSize');
   const brand = val('editNewBrand'), price = val('editNewPrice');
   const qty = parseInt(val('editNewQty')) || 0;
+  const unit = val('editNewUnit') || 'set';
   const msg = document.getElementById('editNewMsg');
   if(!design && !rawSize) return false;                         // nothing typed
   if(!design){ if(msg) msg.innerHTML = `<div class="msg err">${t('enter_design_err')}</div>`; return false; }
@@ -3684,7 +3792,7 @@ function addEditNewLine_(){
     if(!ok.length) return false;
   }
 
-  ok.forEach(x=> editNewLines_.push({ design, colour: x.colour, size: x.size, qty, brand, price }));
+  ok.forEach(x=> editNewLines_.push({ design, colour: x.colour, size: x.size, qty, unit, brand, price }));
   ['editNewDesign','editNewColour','editNewSize','editNewPrice'].forEach(id=>{ const el = document.getElementById(id); if(el) el.value = ''; });
   const q = document.getElementById('editNewQty'); if(q) q.value = '1';
   if(msg) msg.innerHTML = '';
@@ -3728,6 +3836,8 @@ async function saveEditPendingGroup(cname, dk, btn){
       b.colour = newColour;
       if(newSize) b.size = newSize;
       b.qty = newQty;
+      const unEl = document.getElementById(`editUnit-${b.id}`);
+      if(unEl) b.unit = unEl.value;
     }
     // New lines join the SAME order (same customer + same order date), so they show in this same card.
     let added = 0;
@@ -3740,6 +3850,7 @@ async function saveEditPendingGroup(cname, dk, btn){
         colour: l.colour || '',
         size: l.size,
         qty: l.qty,
+        unit: l.unit || 'set',
         pricePerPcs: l.price || '',
         status: 'pending',
         orderedAt: baseOrderedAt,
@@ -3767,11 +3878,12 @@ function getPendingDatedRows(cname, dk){
 
 function buildPendingOrderPdfDated(cname, dk){
   const rows = getPendingDatedRows(cname, dk);
-  const total = rows.reduce((s,b)=>s+b.qty,0);
-  const tableRows = rows.map(b=>[b.designNumber, b.colour||'-', b.size, b.brand||'-', String(b.qty)]);
-  const pp = pdfWithPrice_(['Design Number','Colour','Size','Brand','Set'], tableRows, rows, 'Set');
+  const total = totalsUi_(rows);
+  const hdr = unitHdr_(rows);
+  const tableRows = rows.map(b=>[b.designNumber, b.colour||'-', b.size, b.brand||'-', qtyCell_(b, hdr)]);
+  const pp = pdfWithPrice_(['Design Number','Colour','Size','Brand',hdr], tableRows, rows, hdr);
   return {
-    blob: buildPdfBlob(`${cname}`, `Subhash Sales Agencies · ${dispatchDateLabel(dk)}`, pp.columns, pp.tableRows, `${t('total')}: ${total} ${t('sets')}`, { heading: 'Order' }),
+    blob: buildPdfBlob(`${cname}`, `Subhash Sales Agencies · ${dispatchDateLabel(dk)}`, pp.columns, pp.tableRows, `${t('total')}: ${totalsPdf_(rows)}${amtFooter_(pp)}`, { heading: 'Order' }),
     total
   };
 }
@@ -3785,7 +3897,7 @@ function printPendingOrderDated(cname, dk){
 async function shareWhatsAppPendingDated(cname, dk){
   const { blob, total } = buildPendingOrderPdfDated(cname, dk);
   if(!blob){ alert(t('pdf_gen_fail')); return; }
-  await sharePdfBlob(blob, `Pending-${cname.replace(/[^a-z0-9]/gi,'_')}-${dk}.pdf`, `${t('pending_order')} — ${cname}`, `${t('pending_order')} — ${cname} (${dispatchDateLabel(dk)}), ${t('total')} ${total} ${t('sets')}`);
+  await sharePdfBlob(blob, `Pending-${cname.replace(/[^a-z0-9]/gi,'_')}-${dk}.pdf`, `${t('pending_order')} — ${cname}`, `${t('pending_order')} — ${cname} (${dispatchDateLabel(dk)}), ${t('total')} ${total}`);
 }
 
 async function deletePendingOrderDated(cname, dk){
@@ -3809,11 +3921,12 @@ async function deletePendingOrderDated(cname, dk){
 function buildPendingOrderPdf(cname){
   const rows = bookings.filter(b=>b.customerName===cname && b.status==='pending' && !b.trashed && pdBrandOk_(b) && ((!pdFromDate && !pdToDate) || inPdRange_(b.orderedAt)))
     .sort((a,b)=>(a.designNumber).localeCompare(b.designNumber));
-  const total = rows.reduce((s,b)=>s+b.qty,0);
-  const tableRows = rows.map(b=>[b.designNumber, b.colour||'-', b.size, b.brand||'-', String(b.qty)]);
-  const pp = pdfWithPrice_(['Design Number','Colour','Size','Brand','Set'], tableRows, rows, 'Set');
+  const total = totalsUi_(rows);
+  const hdr = unitHdr_(rows);
+  const tableRows = rows.map(b=>[b.designNumber, b.colour||'-', b.size, b.brand||'-', qtyCell_(b, hdr)]);
+  const pp = pdfWithPrice_(['Design Number','Colour','Size','Brand',hdr], tableRows, rows, hdr);
   return {
-    blob: buildPdfBlob(`${cname}`, `Subhash Sales Agencies · ${new Date().toLocaleDateString('en-IN')}`, pp.columns, pp.tableRows, `${t('total')}: ${total} ${t('sets')}`, { heading: 'Order' }),
+    blob: buildPdfBlob(`${cname}`, `Subhash Sales Agencies · ${new Date().toLocaleDateString('en-IN')}`, pp.columns, pp.tableRows, `${t('total')}: ${totalsPdf_(rows)}${amtFooter_(pp)}`, { heading: 'Order' }),
     total
   };
 }
@@ -3821,7 +3934,7 @@ function buildPendingOrderPdf(cname){
 async function shareWhatsAppPending(cname){
   const { blob, total } = buildPendingOrderPdf(cname);
   if(!blob){ alert(t('pdf_gen_fail')); return; }
-  await sharePdfBlob(blob, `Pending-${cname.replace(/[^a-z0-9]/gi,'_')}.pdf`, `${t('pending_order')} — ${cname}`, `${t('pending_order')} — ${cname}, ${t('total')} ${total} ${t('sets')}`);
+  await sharePdfBlob(blob, `Pending-${cname.replace(/[^a-z0-9]/gi,'_')}.pdf`, `${t('pending_order')} — ${cname}`, `${t('pending_order')} — ${cname}, ${t('total')} ${total}`);
 }
 
 function printPendingOrder(cname){
@@ -3914,21 +4027,21 @@ function buildCustomerOrderPdf(cname){
   // of dates being mixed together by design number.
   const rows = bookings.filter(b=>b.customerName===cname && !b.trashed && custRowOk_(b))
     .sort((a,b)=> dispatchDateKey(a.orderedAt).localeCompare(dispatchDateKey(b.orderedAt)) || (a.designNumber).localeCompare(b.designNumber));
-  let pendTot = 0, doneTot = 0;
+  const hdr = unitHdr_(rows);
   // Includes the order date per line — this list spans every order a
   // customer has ever placed, so staff need to see which line came from
   // which date. Pending and Dispatched sets sit in separate columns.
   const tableRows = rows.map(b=>{
     const done = b.status==='dispatched';
-    if(done) doneTot += b.qty; else pendTot += b.qty;
-    return [dispatchDateLabel(dispatchDateKey(b.orderedAt)), b.designNumber, b.colour||'-', b.size, b.brand||'-', done ? '' : String(b.qty), done ? String(b.qty) : ''];
+    return [dispatchDateLabel(dispatchDateKey(b.orderedAt)), b.designNumber, b.colour||'-', b.size, b.brand||'-', done ? '' : qtyCell_(b, hdr), done ? qtyCell_(b, hdr) : ''];
   });
-  const total = pendTot + doneTot;
-  const pp = pdfWithPrice_(['Date','Design Number','Colour','Size','Brand','Pending Set','Dispatched Set'], tableRows, rows, 'Brand');
+  const total = totalsUi_(rows);
+  const pendRowsX = rows.filter(b=>b.status!=='dispatched'), doneRowsX = rows.filter(b=>b.status==='dispatched');
+  const pp = pdfWithPrice_(['Date','Design Number','Colour','Size','Brand',`Pending ${hdr}`,`Dispatched ${hdr}`], tableRows, rows, 'Brand');
   const setIdx = pp.columns.length - 2;
   const colStyles = {}; colStyles[setIdx] = { halign:'center' }; colStyles[setIdx+1] = { halign:'center' };
   return {
-    blob: buildPdfBlob(`${cname}`, `Subhash Sales Agencies · ${new Date().toLocaleDateString('en-IN')}`, pp.columns, pp.tableRows, `Pending: ${pendTot} Set   |   Dispatched: ${doneTot} Set   |   Total: ${total} Set`, { columnStyles: colStyles, heading: 'Order Status' }),
+    blob: buildPdfBlob(`${cname}`, `Subhash Sales Agencies · ${new Date().toLocaleDateString('en-IN')}`, pp.columns, pp.tableRows, `Pending: ${totalsPdf_(pendRowsX)}   |   Dispatched: ${totalsPdf_(doneRowsX)}   |   Total: ${totalsPdf_(rows)}${amtFooter_(pp)}`, { columnStyles: colStyles, heading: 'Order Status' }),
     total
   };
 }
@@ -3936,7 +4049,7 @@ function buildCustomerOrderPdf(cname){
 async function shareWhatsAppCustomer(cname){
   const { blob, total } = buildCustomerOrderPdf(cname);
   if(!blob){ alert(t('pdf_gen_fail')); return; }
-  await sharePdfBlob(blob, `Order-${cname.replace(/[^a-z0-9]/gi,'_')}.pdf`, `Order — ${cname}`, `Order — ${cname}, Total ${total} Sets`);
+  await sharePdfBlob(blob, `Order-${cname.replace(/[^a-z0-9]/gi,'_')}.pdf`, `Order — ${cname}`, `Order — ${cname}, Total ${total}`);
 }
 
 function printCustomerOrder(cname){
@@ -4039,9 +4152,12 @@ function renderCustomers(main){
 
   const cards = customers.map(cname=>{
     const rows = activeBookings.filter(b=>b.customerName===cname && custRowOk_(b));
-    const total = rows.reduce((s,b)=>s+b.qty,0);
-    const done = rows.filter(b=>b.status==='dispatched').reduce((s,b)=>s+b.qty,0);
-    const pending = total - done;
+    const doneRows_ = rows.filter(b=>b.status==='dispatched');
+    const pendRows_ = rows.filter(b=>b.status!=='dispatched');
+    const total = totalsShort_(rows);
+    const done = totalsShort_(doneRows_);
+    const pending = totalsShort_(pendRows_);
+    const hasPending_ = pendRows_.length > 0;
     const isOpen = expandedCustomer === cname;
 
     let detail = '';
@@ -4050,7 +4166,7 @@ function renderCustomers(main){
       const pendingRows = rows.filter(b=>b.status==='pending');
       detail = `<div class="cust-detail">
         ${dispatchedRows.length ? `<div class="section-label">${t('ready_goods')}</div>` + dispatchedRows.map(b=>`
-          <div class="li"><span>${t('design_word')} ${escapeHtml(b.designNumber)}${b.colour?(' · '+escapeHtml(b.colour)):''} · ${escapeHtml(b.size)}${b.brand?(' · '+escapeHtml(b.brand)):''} · ${b.qty}</span>
+          <div class="li"><span>${t('design_word')} ${escapeHtml(b.designNumber)}${b.colour?(' · '+escapeHtml(b.colour)):''} · ${escapeHtml(b.size)}${b.brand?(' · '+escapeHtml(b.brand)):''} · ${qtyShort_(b)}</span>
           <button class="undo-link" onclick="undoDispatch('${b.id}')">${t('undo')}</button></div>
         `).join('') : ''}
         ${pendingRows.length ? pendingBlockHtml_(cname, pendingRows) : ''}
@@ -4059,7 +4175,7 @@ function renderCustomers(main){
 
     return `<div class="cust-card" onclick="toggleCustomer('${cname.replace(/'/g,"\\'")}')" style="cursor:pointer;">
       <div class="cust-head"><span class="name">${escapeHtml(cname)}</span>
-        <span class="set-pill ${pending>0?'pending':'done'}">${pending>0 ? pending+' '+t('badge_pending') : t('complete')}</span>
+        <span class="set-pill ${hasPending_?'pending':'done'}">${hasPending_ ? pending+' '+t('badge_pending') : t('complete')}</span>
       </div>
       <div class="summary-row">
         <span>${t('total')}: ${total}</span>
@@ -4108,7 +4224,7 @@ function pendingBlockHtml_(cname, pendingRows){
   }
 
   html += pendingRows.map(b=>{
-    const label = `${t('design_word')} ${escapeHtml(b.designNumber)}${b.colour?(' · '+escapeHtml(b.colour)):''} · ${escapeHtml(b.size)}${b.brand?(' · '+escapeHtml(b.brand)):''} · ${b.qty}`;
+    const label = `${t('design_word')} ${escapeHtml(b.designNumber)}${b.colour?(' · '+escapeHtml(b.colour)):''} · ${escapeHtml(b.size)}${b.brand?(' · '+escapeHtml(b.brand)):''} · ${qtyShort_(b)}`;
     if(inCancel){
       return `<label class="pend-sel-row" onclick="event.stopPropagation()">
         <input type="checkbox" ${pendingCancelSel.has(b.id)?'checked':''} onchange="togglePendingCancelSel('${b.id}')">
@@ -4238,13 +4354,14 @@ function renderDeletedOrders(main){
   const cards = trashedCustomers.map(cname=>{
     const rows = trashedAll.filter(b=>b.customerName===cname)
       .sort((a,b)=>(a.designNumber).localeCompare(b.designNumber));
-    const total = rows.reduce((s,b)=>s+b.qty,0);
+    const allSet = rows.every(b=>unitOf_(b)==='set');
+    const totalLabel = allSet ? `${rows.reduce((s,b)=>s+b.qty,0)} ${t('sets_deleted')}` : totalsUi_(rows);
     const lines = rows.map(b=>
-      `<div class="item-line"><span>${t('design_word')} ${escapeHtml(b.designNumber)}${b.colour?(' · '+escapeHtml(b.colour)):''} · ${escapeHtml(b.size)}${b.brand?(' · '+escapeHtml(b.brand)):''}</span><span>${b.qty} ${t('set')} (${b.status==='dispatched'?t('dispatched'):t('badge_pending')})</span></div>`
+      `<div class="item-line"><span>${t('design_word')} ${escapeHtml(b.designNumber)}${b.colour?(' · '+escapeHtml(b.colour)):''} · ${escapeHtml(b.size)}${b.brand?(' · '+escapeHtml(b.brand)):''}</span><span style="display:inline-flex;align-items:center;gap:8px;white-space:nowrap;">${qtyUi_(b)} (${b.status==='dispatched'?t('dispatched'):t('badge_pending')}) <button class="restore-btn mini" onclick="restoreOne('${b.id}')">${t('restore')}</button></span></div>`
     ).join('');
     return `<div class="trash-card">
       <div class="trash-head">
-        <span><b>${escapeHtml(cname)}</b> <span class="subtle">(${total} ${t('sets_deleted')})</span></span>
+        <span><b>${escapeHtml(cname)}</b> <span class="subtle">(${totalLabel})</span></span>
         <div class="trash-actions">
           <button class="restore-btn" onclick="restoreOrder('${cname.replace(/'/g,"\\'")}')">${t('restore')}</button>
           ${canCurrentUserDelete() ? `<button class="perm-del-btn" onclick="permanentDeleteOrder('${cname.replace(/'/g,"\\'")}')">${t('delete_permanently')}</button>` : ''}
