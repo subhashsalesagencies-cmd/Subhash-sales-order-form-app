@@ -5324,51 +5324,61 @@ function catParseTag_(text){
   const out = { name:'', sizes:'', rate:'' };
   // Old phones may not support look-behind in regex; fall back gracefully instead of crashing.
   const mk = (s, f)=>{ try{ return new RegExp(s, f); }catch(e){ return new RegExp(s.replace(/\(\?<![^)]*\)/g, ''), f); } };
-  const T = String(text || '').replace(/[|]/g, '/').replace(/[—–]/g, '-').replace(/[\u2018\u2019]/g, "'");
+  let work = String(text || '')
+    .replace(/(\d)\s*[|]\s*(\d)/g, '$1/$2').replace(/[|]/g, ' ')
+    .replace(/[—–]/g, '-').replace(/[\u2018\u2019]/g, "'");
   const SZW = '(?:XXS|XS|S|M|L|XL|XXL|XXXL|2XL|3XL|4XL|5XL)';
-  const SZ = mk('(?<![\\dA-Z])(\\d{1,2}\\s*[\\/-]\\s*\\d{1,2}|' + SZW + '\\s*\\/\\s*' + SZW + ')(?![\\dA-Z])', 'gi');
+  const SZ = mk('(?<![\\dA-Z])(\\d{1,2}\\s*[\\/-]\\s*\\d{1,2}|' + SZW + '\\s*[\\/-]\\s*' + SZW + ')(?![\\dA-Z])', 'gi');
   const clean = x=>x.replace(/\s+/g, '').replace(/-/g, '/').toUpperCase();
-  let work = T;
-  // ---- rate: "543/-"  "Rs 543"  "₹543"  "rate 543"  "@543"
+
+  // ---- RATE ----
+  // 1) the word RATE / Rs / MRP / price with the number after it (same line or next line)
+  // 2) a number followed by "/-"   e.g. 543/-
   const rateRes = [
-    mk('(?:rs\\.?|₹|rate|mrp|price|@)\\s*[:.\\-]?\\s*(\\d{2,5})(?!\\d)', 'i'),
-    mk('(?<!\\d)(\\d{2,5})\\s*[\\/l]?\\s*-\\s*(?:only|rs)?(?![\\dA-Z])', 'i'),
-    mk('(?<!\\d)(\\d{2,5})\\s*\\/\\s*-', 'i')
+    mk('(?:\\brate|\\brs\\b\\.?|₹|\\bmrp|\\bprice)[\\s:.\\-=]*(?:rs\\.?|₹)?[\\s:.\\-=]*(\\d{2,5})(?!\\d)', 'i'),
+    mk('(?<!\\d)(\\d{2,5})\\s*[\\/|l]\\s*-', 'i'),
+    mk('@\\s*(\\d{2,5})(?!\\d)', 'i')
   ];
   for(const re of rateRes){
     const m = work.match(re);
     if(m){ out.rate = m[1]; work = work.replace(m[0], ' '); break; }
   }
-  // ---- size
-  const m1 = work.match(/sizes?\s*[:.\-]?\s*([^\n]{1,40})/i);
+
+  // ---- SIZE ----
+  // numbers written after / below the word SIZE are the size; otherwise look for a size-looking pair anywhere
   let found = [];
-  if(m1) found = (m1[1].match(SZ) || []).map(clean);
+  const m1 = work.match(mk('\\bsizes?\\b[\\s:.\\-=]*([^\\n]{0,40}(?:\\n[^\\n]{0,40})?)', 'i'));
+  if(m1){
+    found = (m1[1].match(SZ) || []).map(clean);
+    if(!found.length){ const one = m1[1].match(/^\s*(\d{1,2})(?!\d)/); if(one) found = [one[1]]; }
+  }
   if(!found.length) found = (work.match(SZ) || []).map(clean);
   out.sizes = [...new Set(found)].slice(0, 4).join(' ');
   found.forEach(f=>{ work = work.replace(new RegExp(f.split('/').join('\\s*[\\/-]\\s*'), 'i'), ' '); });
-  work = work.replace(/sizes?\s*[:.\-]?/ig, ' ');
-  // ---- design number: ONLY the number/code — never the words around it
+  work = work.replace(/\bsizes?\b\s*[:.\-=]?/ig, ' ');
+
+  // ---- DESIGN NUMBER ----
+  // Only the code itself — never the words around it. A "#" or the word Design/Article comes first;
+  // otherwise the FIRST number/code written on the photo (reading order) is the design number.
   const fix = s=>{
     s = s.toUpperCase();
     if(/^[0-9OIL]{4,8}$/.test(s) && (s.match(/\d/g) || []).length >= 3) s = s.replace(/O/g, '0').replace(/[IL]/g, '1');
     return s.replace(/^[-\/.]+|[-\/.]+$/g, '');
   };
-  const TOK = '([A-Z]{0,3}\\d[A-Z0-9]{2,9}(?:[-\\/][A-Z0-9]{1,5})?)';
-  const okTok = s=>{ const d = (s.match(/\d/g) || []).length; return d >= 3 && d <= 9 && s.length <= 14; };
+  const TOK = '([A-Z]{0,3}\\d[A-Z0-9]{1,9}(?:[-\\/][A-Z0-9]{1,6})?)';
+  const okTok = s=>{
+    const d = (s.match(/\d/g) || []).length, l = (s.match(/[A-Z]/g) || []).length;
+    return s.length <= 16 && d <= 10 && (d >= 3 || (d >= 2 && l >= 1)) && !/^(19|20)\d\d$/.test(s);
+  };
   const labelled = [
-    mk('(?:design|desgn|dsn|d\\.?\\s*no|article|art|model|item|code|style|no)\\.?\\s*(?:no\\.?|number|#|:|-|=)*\\s*' + TOK, 'i'),
-    mk('#\\s*' + TOK, 'i')
+    mk('#\\s*' + TOK, 'i'),
+    mk('\\b(?:design|desgn|dsn|d\\.?\\s*no|article|art|model|item|code|style)\\b\\.?\\s*(?:no\\.?|number|#|:|-|=)*\\s*' + TOK, 'i')
   ];
   for(const re of labelled){ const m = work.match(re); if(m && okTok(fix(m[1]))){ out.name = fix(m[1]); break; } }
   if(!out.name){
     const re = mk('(?<![A-Z0-9])' + TOK + '(?![A-Z0-9])', 'gi');
-    let best = '', m;
-    while((m = re.exec(work))){
-      const s = fix(m[1]); if(!okTok(s)) continue;
-      if(/^(19|20)\d\d$/.test(s)) continue;                       // looks like a year
-      if(!best || (s.match(/\d/g) || []).length > (best.match(/\d/g) || []).length) best = s;
-    }
-    out.name = best;
+    let m;
+    while((m = re.exec(work))){ const s = fix(m[1]); if(okTok(s)){ out.name = s; break; } }   // first one wins
   }
   return out;
 }
@@ -5467,10 +5477,25 @@ function catHfDel(w, i){ catHfArr_(w).splice(i, 1); gid_('catHfList_' + w).inner
 
 /* ---- Add MANY photos at once: each photo gets its own design / size / rate row (auto-filled from the photo) ---- */
 let catBulk = [], catBulkSeq = 0;
-function catPickMany(){
+function catPickMany(mode){
+  if(!mode){                                   // first ask: camera or gallery
+    const old = gid_('catPickOv'); if(old) old.remove();
+    const ov = document.createElement('div'); ov.className = 'modal-ov'; ov.id = 'catPickOv'; ov.style.zIndex = 9300;
+    ov.innerHTML = `<div class="modal-sheet">
+      <div class="voice-head"><b>Add Photos</b><button class="voice-x" onclick="gid_('catPickOv').remove()">✕</button></div>
+      <button class="primary" onclick="gid_('catPickOv').remove();catPickMany('cam')">📷 Take Photo with Camera</button>
+      <button class="secondary" style="margin-top:8px" onclick="gid_('catPickOv').remove();catPickMany('gal')">🖼️ Choose Many from Gallery</button>
+      <div class="subtle" style="margin-top:8px">Camera takes one photo at a time — after each photo you can take the next one.</div>
+    </div>`;
+    document.body.appendChild(ov);
+    ov.addEventListener('click', e=>{ if(e.target === ov) ov.remove(); });
+    return;
+  }
   const i = document.createElement('input');
-  i.type = 'file'; i.accept = 'image/*'; i.multiple = true;
-  i.onchange = ()=>{ if(i.files && i.files.length) openCatBulk([...i.files]); };
+  i.type = 'file'; i.accept = 'image/*';
+  if(mode === 'cam') i.setAttribute('capture', 'environment'); else i.multiple = true;
+  i.style.display = 'none'; document.body.appendChild(i);
+  i.onchange = ()=>{ const fl = i.files ? [...i.files] : []; i.remove(); if(fl.length) openCatBulk(fl); };
   i.click();
 }
 function closeCatBulk(){
@@ -5496,7 +5521,7 @@ function openCatBulk(files){
       <label>Brand (optional — same for all photos)</label>
       <input id="catBulkBrand" class="fgap" list="brandList">
       <div id="cbRows"></div>
-      <button type="button" class="btn-pill ghost fgap" style="margin-top:10px" onclick="catPickMany()">＋ Add more photos</button>
+      <div class="two fgap" style="margin-top:10px"><button type="button" class="btn-pill" onclick="catPickMany('cam')">📷 Camera</button><button type="button" class="btn-pill ghost" onclick="catPickMany('gal')">🖼️ Gallery</button></div>
       ${catHfBox_('b')}
       <button class="primary" id="catBulkSaveBtn" onclick="catBulkSave()">Save All</button>
     </div>`;
