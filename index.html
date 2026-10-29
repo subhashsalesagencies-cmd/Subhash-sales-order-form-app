@@ -517,6 +517,16 @@
   .modal-sheet .voice-head{ margin-bottom:10px; }
   .cat-prev{ width:120px; aspect-ratio:3/4; background:#E6EDF3; border-radius:8px; overflow:hidden; margin-bottom:8px; display:flex; align-items:center; justify-content:center; font-size:12px; color:#7e8896; }
   .cat-prev img{ width:100%; height:100%; object-fit:cover; }
+  .cat-hf-list{ display:flex; flex-wrap:wrap; gap:6px; margin:6px 0 8px; }
+  .cat-hf-chip{ background:#F7E4DA; color:var(--rust); border-radius:14px; padding:4px 6px 4px 10px; font-size:12.5px; font-weight:600; display:inline-flex; align-items:center; gap:6px; }
+  .cat-hf-chip button{ background:none; border:none; color:var(--rust); font-size:14px; padding:0 4px; }
+  .cb-row{ display:flex; gap:10px; align-items:flex-start; padding:10px 0; border-bottom:1px solid var(--line); }
+  .cb-th{ width:64px; flex:0 0 64px; aspect-ratio:3/4; border-radius:8px; overflow:hidden; background:#E6EDF3; }
+  .cb-th img{ width:100%; height:100%; object-fit:cover; }
+  .cb-f{ flex:1; min-width:0; display:flex; flex-direction:column; gap:6px; }
+  .cb-f input{ margin:0; }
+  .cb-x{ background:none; border:none; font-size:18px; color:#7e8896; padding:4px; }
+  .cb-row.bad input{ border-color:var(--rust); }
   .two{ display:grid; grid-template-columns:1fr 1fr; gap:10px; }
   .fgap{ margin-bottom:10px; }
 
@@ -1493,7 +1503,7 @@ async function fetchCloudState_(){
   // catalog list is read now and then (not every 20s) to keep Google Sheets traffic low; the customer-orders inbox is read every time
   cloudTick_++;
   const wantCat = cloudTick_ === 1 || cloudTick_ % 5 === 0 || currentTab === 'catalog' || currentTab === 'dashboard';
-  const r = await Promise.all([ storageGet('bookings'), storageGet('activityLog'), storageGet('staffApprovals'), storageGet('catalogInbox'), wantCat ? storageGet('catalog') : Promise.resolve(undefined) ]);
+  const r = await Promise.all([ storageGet('bookings'), storageGet('activityLog'), storageGet('staffApprovals'), storageGet('catalogInbox'), wantCat ? catLoadAll_().catch(()=>null) : Promise.resolve(undefined) ]);
   return { b:r[0], a:r[1], s:r[2], i:r[3], c:r[4] };
 }
 // A key is "busy" while this device still has changes on their way to the cloud;
@@ -1505,8 +1515,8 @@ function applyCloudState_(st){
   lastSyncAt_ = new Date();
   try{ if(st.i !== undefined) catalogInbox = st.i ? (JSON.parse(st.i) || []) : []; }catch(e){ console.error('inbox parse', e); }
   try{
-    if(st.c !== undefined && !isKeyBusy_('catalog') && st.c !== lastCloudRaw_.c){
-      catalog = st.c ? (JSON.parse(st.c) || []) : []; lastCloudRaw_.c = st.c; changed = true;
+    if(st.c && !catBusy_() && st.c.sig !== lastCloudRaw_.c){
+      catalog = st.c.list; catPagesSaved_ = st.c.pages; lastCloudRaw_.c = st.c.sig; changed = true;
     }
   }catch(e){ console.error('catalog parse', e); }
   try{
@@ -5053,12 +5063,69 @@ let catalog = [];          // [{id,name,sizes,rate,brand,hidden,parts,imgV,creat
 let catalogInbox = [];     // orders placed by customers from the catalog link
 let catalogImported = [];  // ids of customer orders already copied into `bookings`
 let lastSyncAt_ = null;
-try{ catalog = JSON.parse(localStorage.getItem('ssa_catalog') || '[]') || []; }catch(e){ catalog = []; }
+/* ---------- Catalog list is stored in PAGES: when one Google-Sheet cell is nearly full, the next designs go to the next row automatically ---------- */
+const CAT_PAGE_MAX = 40000;                 // a Google Sheet cell holds 50,000 characters — stay safely below
+let catPagesSaved_ = [];                    // the page texts as last saved/loaded, so only changed pages are re-sent
+function catPageKey_(i){ return i === 0 ? 'catalog' : 'catalog_' + i; }
+function catPaginate_(list){
+  const stored = list.slice().reverse();    // oldest first -> new designs only touch the LAST page
+  const pages = []; let cur = [], len = 2;
+  for(const it of stored){
+    const j = JSON.stringify(it);
+    if(cur.length && len + j.length + 1 > CAT_PAGE_MAX){ pages.push(cur); cur = []; len = 2; }
+    cur.push(it); len += j.length + 1;
+  }
+  pages.push(cur);
+  return pages.map(p=>JSON.stringify(p));
+}
+function catFromPages_(texts, paged){
+  const all = [].concat(...texts.map(t=>{ try{ return JSON.parse(t) || []; }catch(e){ return []; } }));
+  return paged ? all.reverse() : all;
+}
+function catLoadLocal_(){
+  try{
+    const raw0 = localStorage.getItem('ssa_catalog');
+    if(raw0 === null) return [];
+    let meta = null; try{ meta = JSON.parse(localStorage.getItem('ssa_catalogMeta') || 'null'); }catch(e){}
+    if(!meta || meta.v !== 2){ catPagesSaved_ = [raw0]; return catFromPages_([raw0], false); }
+    const pages = [raw0];
+    for(let i = 1; i < meta.pages; i++) pages.push(localStorage.getItem('ssa_' + catPageKey_(i)) || '[]');
+    catPagesSaved_ = pages;
+    return catFromPages_(pages, true);
+  }catch(e){ return []; }
+}
+// Reads the whole catalog from the cloud (all pages). Returns { list, pages, sig } or null if it could not be read completely.
+async function catLoadAll_(){
+  const r = await Promise.all([ storageGet('catalogMeta'), storageGet('catalog') ]);
+  const rawMeta = r[0], raw0 = r[1];
+  if(raw0 === null || raw0 === undefined) return { list:[], pages:[], sig:'' };
+  let meta = null; try{ meta = rawMeta ? JSON.parse(rawMeta) : null; }catch(e){}
+  if(!meta || meta.v !== 2) return { list:catFromPages_([raw0], false), pages:[raw0], sig:raw0 };   // old single-cell format
+  const pages = [raw0], idx = [];
+  for(let i = 1; i < meta.pages; i++) idx.push(i);
+  for(let k = 0; k < idx.length; k += 4){
+    const got = await Promise.all(idx.slice(k, k + 4).map(i=>storageGet(catPageKey_(i))));
+    for(const g of got){ if(g === null || g === undefined) return null; pages.push(g); }
+  }
+  return { list:catFromPages_(pages, true), pages, sig:rawMeta + '\u0001' + pages.join('\u0001') };
+}
+function catBusy_(){
+  const busy = k=>isKeyBusy_(k);
+  if(busy('catalog') || busy('catalogMeta')) return true;
+  return [...dirtyKeys, ...pushInFlight_, ...pushQueued_].some(k=>/^catalog_\d+$/.test(k));
+}
+catalog = catLoadLocal_();
 try{ catalogImported = JSON.parse(localStorage.getItem('ssa_catalogImported') || '[]') || []; }catch(e){ catalogImported = []; }
 try{ const lg = gid_('sideLogo'); if(lg) lg.src = COMPANY_LOGO_B64; }catch(e){}
 
 async function saveCatalog(){
-  try{ await storageSet('catalog', JSON.stringify(catalog)); }catch(e){ console.error('catalog save failed', e); }
+  try{
+    const pages = catPaginate_(catalog), oldN = catPagesSaved_.length;
+    for(let i = 0; i < pages.length; i++){ if(pages[i] !== catPagesSaved_[i]) await storageSet(catPageKey_(i), pages[i]); }
+    await storageSet('catalogMeta', JSON.stringify({ v:2, pages:pages.length }));
+    for(let i = pages.length; i < oldN; i++) await storageSet(catPageKey_(i), '[]');   // clear pages that are no longer needed
+    catPagesSaved_ = pages;
+  }catch(e){ console.error('catalog save failed', e); }
 }
 
 /* ---------- Photos: stored in small pieces (separate keys) so the sheet never chokes ---------- */
@@ -5076,7 +5143,9 @@ function catLimit_(fn){                       // at most 3 photo downloads at th
     if(catActive_ < 3) run(); else catWait_.push(run);
   });
 }
-async function catGetImg_(it){
+function catDriveUrl_(id, w){ return 'https://drive.google.com/thumbnail?id=' + encodeURIComponent(id) + '&sz=w' + (w || 640); }
+async function catGetImg_(it, big){
+  if(it && it.fileId) return catDriveUrl_(it.fileId, big ? 1000 : 640);   // photo lives in Google Drive; only the link is kept in the sheet
   if(!it || !it.parts) return '';
   const ck = catKey_(it);
   if(catImgMem_[ck]) return catImgMem_[ck];
@@ -5117,14 +5186,14 @@ function catEncode_(file){                    // shrinks the photo so it is ligh
     const img = new Image(), url = URL.createObjectURL(file);
     img.onload = ()=>{
       URL.revokeObjectURL(url);
-      let side = 640, out = '';
+      let side = 800, out = '';
       for(let k = 0; k < 4; k++){
         const sc = Math.min(1, side / Math.max(img.width, img.height));
         const c = document.createElement('canvas');
         c.width = Math.round(img.width * sc); c.height = Math.round(img.height * sc);
         c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-        out = c.toDataURL('image/jpeg', 0.62 - k * 0.06);
-        if(out.length <= CAT_CHUNK * 3) break;
+        out = c.toDataURL('image/jpeg', 0.72 - k * 0.07);
+        if(out.length <= 130000) break;
         side = Math.round(side * 0.8);
       }
       resolve(out);
@@ -5133,35 +5202,49 @@ function catEncode_(file){                    // shrinks the photo so it is ligh
     img.src = url;
   });
 }
+// Saves the photo INSIDE the Google Sheet (in small pieces). Nothing goes to Google Drive. Returns the number of pieces.
 async function catUploadImg_(id, dataUrl){
-  const parts = Math.ceil(dataUrl.length / CAT_CHUNK);
-  for(let i = 0; i < parts; i++){
-    await postToSheet_({ key:'catimg_' + id + '_' + i, value:dataUrl.slice(i * CAT_CHUNK, (i + 1) * CAT_CHUNK) });
+  const b64 = dataUrl.split(',')[1] || '';
+  const n = Math.max(1, Math.ceil(b64.length / CAT_CHUNK));
+  const mk = i=>({ key:'catimg_' + id + '_' + i, value:(i === 0 ? 'data:image/jpeg;base64,' : '') + b64.slice(i * CAT_CHUNK, (i + 1) * CAT_CHUNK) });
+  for(let i = 0; i < n; i++){
+    let ok = false;
+    for(let tries = 0; tries < 3 && !ok; tries++){
+      try{ const r = await postToSheet_(mk(i)); ok = !!r && r.ok !== false; }catch(e){ ok = false; }
+    }
+    if(!ok) throw new Error('SHEET_SAVE_FAILED');
   }
-  return parts;
+  try{                                                        // make sure the last piece really landed
+    const r = await fetch(`${SHEET_SCRIPT_URL}?key=${encodeURIComponent('catimg_' + id + '_' + (n - 1))}`);
+    const d = await r.json();
+    if(!d || d.value == null || d.value === '') throw new Error('x');
+  }catch(e){ throw new Error('SHEET_SAVE_FAILED'); }
+  return n;
 }
 function catTitle_(c){ return c.name + (c.sizes ? ' ' + c.sizes : ''); }
 function catRate_(c){ const r = Number(c.rate) || 0; return r ? r : 0; }
 
 /* ---------- Owner / staff: Catalog tab ---------- */
-let catSearch = '', catSel = new Set(), catEditId = null, catFile = null;
+let catSearch = '', catSel = new Set(), catEditId = null, catFile = null, catShow = 150;
 
 function catGridHtml_(){
   const q = catSearch.trim().toLowerCase();
   const list = catalog.filter(c=>!q || (c.name + ' ' + (c.sizes||'') + ' ' + (c.brand||'')).toLowerCase().includes(q));
+  const total = list.length; list.splice(catShow);
   if(!list.length) return `<div class="empty">${catalog.length ? 'No design found' : 'No designs yet — tap “ADD NEW DESIGN” to upload your first photo'}</div>`;
   return `<div class="cat-grid">${list.map(c=>`
     <div class="cat-card ${c.hidden ? 'hid' : ''}" onclick="openCatForm('${c.id}')">
       <label class="cat-chk" onclick="event.stopPropagation()"><input type="checkbox" ${catSel.has(c.id) ? 'checked' : ''} onchange="toggleCatSel('${c.id}', this.checked)"></label>
       <div class="cat-img"><img data-cid="${c.id}" alt=""></div>
-      <div class="cat-meta"><div class="cat-rate">Rate: ${catRate_(c)}</div><div class="cat-name">${escapeHtml(catTitle_(c))}</div>${c.hidden ? '<div class="subtle">Hidden from customers</div>' : ''}</div>
-    </div>`).join('')}</div>`;
+      <div class="cat-meta"><div class="cat-rate">Rate: ${catRate_(c)}</div><div class="cat-name">${escapeHtml(catTitle_(c))}</div>${c.hidden ? '<div class="subtle">Hidden from customers</div>' : (c.hideFor && c.hideFor.length ? `<div class="subtle">Hidden from ${c.hideFor.length} customer${c.hideFor.length > 1 ? 's' : ''}</div>` : '')}</div>
+    </div>`).join('')}</div>${total > list.length ? `<div style="text-align:center;margin:14px 0"><button class="btn-pill ghost" onclick="catShow+=150;onCatSearch(catSearch)">Show more (${total - list.length} more)</button></div>` : ''}`;
 }
 function renderCatalog(main){
   main.innerHTML = `
     <div class="cat-bar">
-      <input id="catSearchInp" class="filter-input" placeholder="Search design / size / brand" value="${escapeHtml(catSearch)}" oninput="onCatSearch(this.value)">
+      <input id="catSearchInp" class="filter-input" placeholder="Search design / size / brand" value="${escapeHtml(catSearch)}" oninput="catShow=150;onCatSearch(this.value)">
       <button class="btn-pill" onclick="openCatShare(false)">🔗 Share Catalog Link</button>
+      <button class="btn-pill alt" onclick="catPickMany()">🗂️ Add Many Photos</button>
       ${catSel.size ? `<button class="btn-pill alt" onclick="openCatShare(true)">Share ${catSel.size} selected</button><button class="btn-pill ghost" onclick="catSel.clear();render()">Clear</button>` : ''}
     </div>
     <div id="catGrid">${catGridHtml_()}</div>
@@ -5176,6 +5259,7 @@ function openCatForm(id, keep){
   closeCatForm();
   catEditId = id || null; catFile = null;
   const c = id ? (catalog.find(x=>x.id === id) || {}) : (keep || {});
+  catHideFor = (c.hideFor || []).slice();
   const ov = document.createElement('div');
   ov.className = 'modal-ov'; ov.id = 'catFormOv';
   ov.innerHTML = `<div class="modal-sheet">
@@ -5183,7 +5267,14 @@ function openCatForm(id, keep){
     <div id="catFormMsg"></div>
     <label>Photo ${id ? '(leave empty to keep the same photo)' : '*'}</label>
     <div class="cat-prev" id="catPrev">${id ? `<img data-cid="${id}" alt="">` : 'No photo'}</div>
-    <input type="file" id="catFile" accept="image/*" onchange="onCatFile(this)" class="fgap">
+    <div class="two fgap">
+      <button type="button" class="btn-pill" onclick="gid_('catCam').click()">📷 Take Photo</button>
+      <button type="button" class="btn-pill ghost" onclick="gid_('catFile').click()">🖼️ From Gallery</button>
+    </div>
+    ${id ? '' : `<button type="button" class="btn-pill alt fgap" style="width:100%" onclick="catPickMany()">🗂️ Select Many Photos at Once</button>`}
+    <input type="file" id="catCam" accept="image/*" capture="environment" hidden onchange="onCatFile(this)">
+    <input type="file" id="catFile" accept="image/*" hidden onchange="onCatFile(this)">
+    <div id="catOcr"></div>
     <label>Design Name / Number *</label>
     <input id="catName" class="fgap" value="${escapeHtml(c.name || '')}" placeholder="e.g. T16004">
     <div class="two fgap">
@@ -5192,6 +5283,7 @@ function openCatForm(id, keep){
     </div>
     <label>Brand (optional)</label>
     <input id="catBrand" class="fgap" list="brandList" value="${escapeHtml(c.brand || '')}">
+    ${catHfBox_('s')}
     ${id ? `<label class="pend-sel-row" style="border:none"><input type="checkbox" id="catHidden" ${c.hidden ? 'checked' : ''}> Hide from customers</label>` : ''}
     <button class="primary" id="catSaveBtn" onclick="saveCatForm(false)">Save</button>
     ${id ? '' : '<button class="secondary" style="margin-top:8px" onclick="saveCatForm(true)">Save &amp; Add Next</button>'}
@@ -5205,6 +5297,294 @@ function onCatFile(inp){
   catFile = inp.files && inp.files[0] ? inp.files[0] : null;
   const p = gid_('catPrev');
   if(catFile && p){ const u = URL.createObjectURL(catFile); p.innerHTML = `<img src="${u}" alt="">`; }
+  if(catFile) catAutoFill_(catFile);
+}
+
+/* ---- Reads the design number / size / rate printed on the photo and fills the empty boxes ---- */
+let tessPromise_ = null;
+function loadTesseract_(){
+  if(window.Tesseract) return Promise.resolve();
+  if(!tessPromise_) tessPromise_ = loadScriptOnce_('https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js').catch(e=>{ tessPromise_ = null; throw e; });
+  return tessPromise_;
+}
+function catCanvas_(file, maxSide){
+  return new Promise((resolve, reject)=>{
+    const img = new Image(), url = URL.createObjectURL(file);
+    img.onload = ()=>{
+      URL.revokeObjectURL(url);
+      const sc = Math.min(1, maxSide / Math.max(img.width, img.height));
+      const c = document.createElement('canvas'); c.width = Math.round(img.width * sc); c.height = Math.round(img.height * sc);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height); resolve(c);
+    };
+    img.onerror = ()=>{ URL.revokeObjectURL(url); reject(new Error('image load failed')); };
+    img.src = url;
+  });
+}
+function catParseTag_(text){
+  const out = { name:'', sizes:'', rate:'' };
+  // Old phones may not support look-behind in regex; fall back gracefully instead of crashing.
+  const mk = (s, f)=>{ try{ return new RegExp(s, f); }catch(e){ return new RegExp(s.replace(/\(\?<![^)]*\)/g, ''), f); } };
+  const T = String(text || '').replace(/[|]/g, '/').replace(/[—–]/g, '-').replace(/[\u2018\u2019]/g, "'");
+  const SZW = '(?:XXS|XS|S|M|L|XL|XXL|XXXL|2XL|3XL|4XL|5XL)';
+  const SZ = mk('(?<![\\dA-Z])(\\d{1,2}\\s*[\\/-]\\s*\\d{1,2}|' + SZW + '\\s*\\/\\s*' + SZW + ')(?![\\dA-Z])', 'gi');
+  const clean = x=>x.replace(/\s+/g, '').replace(/-/g, '/').toUpperCase();
+  let work = T;
+  // ---- rate: "543/-"  "Rs 543"  "₹543"  "rate 543"  "@543"
+  const rateRes = [
+    mk('(?:rs\\.?|₹|rate|mrp|price|@)\\s*[:.\\-]?\\s*(\\d{2,5})(?!\\d)', 'i'),
+    mk('(?<!\\d)(\\d{2,5})\\s*[\\/l]?\\s*-\\s*(?:only|rs)?(?![\\dA-Z])', 'i'),
+    mk('(?<!\\d)(\\d{2,5})\\s*\\/\\s*-', 'i')
+  ];
+  for(const re of rateRes){
+    const m = work.match(re);
+    if(m){ out.rate = m[1]; work = work.replace(m[0], ' '); break; }
+  }
+  // ---- size
+  const m1 = work.match(/sizes?\s*[:.\-]?\s*([^\n]{1,40})/i);
+  let found = [];
+  if(m1) found = (m1[1].match(SZ) || []).map(clean);
+  if(!found.length) found = (work.match(SZ) || []).map(clean);
+  out.sizes = [...new Set(found)].slice(0, 4).join(' ');
+  found.forEach(f=>{ work = work.replace(new RegExp(f.split('/').join('\\s*[\\/-]\\s*'), 'i'), ' '); });
+  work = work.replace(/sizes?\s*[:.\-]?/ig, ' ');
+  // ---- design number: ONLY the number/code — never the words around it
+  const fix = s=>{
+    s = s.toUpperCase();
+    if(/^[0-9OIL]{4,8}$/.test(s) && (s.match(/\d/g) || []).length >= 3) s = s.replace(/O/g, '0').replace(/[IL]/g, '1');
+    return s.replace(/^[-\/.]+|[-\/.]+$/g, '');
+  };
+  const TOK = '([A-Z]{0,3}\\d[A-Z0-9]{2,9}(?:[-\\/][A-Z0-9]{1,5})?)';
+  const okTok = s=>{ const d = (s.match(/\d/g) || []).length; return d >= 3 && d <= 9 && s.length <= 14; };
+  const labelled = [
+    mk('(?:design|desgn|dsn|d\\.?\\s*no|article|art|model|item|code|style|no)\\.?\\s*(?:no\\.?|number|#|:|-|=)*\\s*' + TOK, 'i'),
+    mk('#\\s*' + TOK, 'i')
+  ];
+  for(const re of labelled){ const m = work.match(re); if(m && okTok(fix(m[1]))){ out.name = fix(m[1]); break; } }
+  if(!out.name){
+    const re = mk('(?<![A-Z0-9])' + TOK + '(?![A-Z0-9])', 'gi');
+    let best = '', m;
+    while((m = re.exec(work))){
+      const s = fix(m[1]); if(!okTok(s)) continue;
+      if(/^(19|20)\d\d$/.test(s)) continue;                       // looks like a year
+      if(!best || (s.match(/\d/g) || []).length > (best.match(/\d/g) || []).length) best = s;
+    }
+    out.name = best;
+  }
+  return out;
+}
+// One shared OCR engine: reads the photo twice (scattered-text mode, then normal mode) and merges what it found.
+let ocrWorker_ = null, ocrChain_ = Promise.resolve();
+async function getOcrWorker_(){
+  await loadTesseract_();
+  if(!ocrWorker_) ocrWorker_ = await Tesseract.createWorker('eng');
+  return ocrWorker_;
+}
+function catReadPhoto_(file){
+  const job = ocrChain_.then(async ()=>{
+    let w; try{ w = await getOcrWorker_(); }catch(e){ ocrWorker_ = null; throw e; }
+    const cv = await catCanvas_(file, 1800);
+    const merged = { name:'', sizes:'', rate:'' };
+    for(const psm of ['11', '3']){
+      await w.setParameters({ tessedit_pageseg_mode: psm });
+      const r = await w.recognize(cv);
+      const f = catParseTag_(r && r.data && r.data.text);
+      ['name', 'sizes', 'rate'].forEach(k=>{ if(!merged[k] && f[k]) merged[k] = f[k]; });
+      if(merged.name && merged.sizes && merged.rate) break;
+    }
+    return merged;
+  });
+  ocrChain_ = job.catch(()=>{});
+  return job;
+}
+async function catAutoFill_(file){
+  const box = gid_('catOcr'); if(!box) return;
+  const nm = gid_('catName'), sz = gid_('catSizes'), rt = gid_('catRate');
+  if(nm.value.trim() && sz.value.trim() && rt.value.trim()){ box.innerHTML = ''; return; }
+  if(!navigator.onLine){ box.innerHTML = ''; return; }
+  box.innerHTML = '<div class="msg info">🔍 Reading design number / size / rate from the photo…</div>';
+  try{
+    const f = await catReadPhoto_(file);
+    if(catFile !== file || !gid_('catOcr')) return;           // photo was changed/closed meanwhile
+    const got = [];
+    if(!nm.value.trim() && f.name){ nm.value = f.name; got.push('Design'); }
+    if(!sz.value.trim() && f.sizes){ sz.value = f.sizes; got.push('Size'); }
+    if(!rt.value.trim() && f.rate){ rt.value = f.rate; got.push('Rate'); }
+    gid_('catOcr').innerHTML = got.length
+      ? `<div class="msg ok">✓ Auto-filled from photo: ${got.join(', ')} — please check once.</div>`
+      : '<div class="msg info">Could not find the design number / size / rate on the photo — please type them.</div>';
+  }catch(e){
+    console.error('photo read failed', e);
+    const b = gid_('catOcr'); if(b) b.innerHTML = '<div class="msg info">Could not read the photo automatically — please type the details.</div>';
+  }
+}
+/* ---- Hide a design from specific customers (matched by name / mobile; stored only as scrambled codes, never as plain numbers) ---- */
+function cyrb53_(str){
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for(let i = 0, ch; i < str.length; i++){ ch = str.charCodeAt(i); h1 = Math.imul(h1 ^ ch, 2654435761); h2 = Math.imul(h2 ^ ch, 1597334677); }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return (4294967296 * (2097151 & h2) + (h1 >>> 0)).toString(36);
+}
+function catNormName_(s){ return String(s || '').toLowerCase().replace(/[^a-z0-9\u0900-\u097f]/g, ''); }
+function catNormMob_(s){ return String(s || '').replace(/\D/g, '').slice(-10); }
+function catHashes_(name, mob){
+  const n = catNormName_(name), m = catNormMob_(mob);
+  return { nh: n ? cyrb53_('ssa-n|' + n) : '', mh: m.length >= 10 ? cyrb53_('ssa-m|' + m) : '', tail: m.length >= 10 ? m.slice(-4) : '' };
+}
+function catHiddenFor_(c, who){
+  if(!c || !c.hideFor || !c.hideFor.length) return false;
+  const h = catHashes_(who && who.name, who && who.phone);
+  return c.hideFor.some(e=>(e.mh && h.mh && e.mh === h.mh) || (e.nh && h.nh && e.nh === h.nh));
+}
+let catHideFor = [], catBulkHideFor = [];
+function catHfArr_(w){ return w === 'b' ? catBulkHideFor : catHideFor; }
+function catHfListHtml_(w){
+  const a = catHfArr_(w);
+  return a.length ? a.map((e, i)=>`<span class="cat-hf-chip">${escapeHtml(e.label || 'Customer')}${e.tail ? ' · ••' + e.tail : ''}<button type="button" onclick="catHfDel('${w}',${i})">✕</button></span>`).join('')
+    : '<span class="subtle">None — every customer can see this design</span>';
+}
+function catHfBox_(w){
+  return `<label>Hide from specific customers (optional)</label>
+    <div class="subtle">Add the customer's name and mobile. They will not see this design in the catalog link.</div>
+    <div class="cat-hf-list" id="catHfList_${w}">${catHfListHtml_(w)}</div>
+    <div class="two fgap"><input id="catHfName_${w}" placeholder="Customer name"><input id="catHfMob_${w}" inputmode="tel" placeholder="Mobile (10 digits)"></div>
+    <button type="button" class="btn-pill ghost fgap" onclick="catHfAdd('${w}')">＋ Add customer</button>
+    <div id="catHfMsg_${w}"></div>`;
+}
+function catHfAdd(w){
+  const nm = gid_('catHfName_' + w), mb = gid_('catHfMob_' + w), msg = gid_('catHfMsg_' + w);
+  const name = nm.value.trim(), mob = mb.value.trim();
+  const bad = t_=>{ msg.innerHTML = `<div class="msg err">${t_}</div>`; };
+  if(!name && !mob) return bad('Enter the customer name and mobile number');
+  if(mob && catNormMob_(mob).length < 10) return bad('Mobile number must be 10 digits');
+  const h = catHashes_(name, mob);
+  const arr = catHfArr_(w);
+  if(!arr.some(e=>(h.mh && e.mh === h.mh) || (!h.mh && h.nh && e.nh === h.nh))) arr.push({ label:name, tail:h.tail, nh:h.nh, mh:h.mh });
+  nm.value = ''; mb.value = ''; msg.innerHTML = '';
+  gid_('catHfList_' + w).innerHTML = catHfListHtml_(w);
+}
+function catHfDel(w, i){ catHfArr_(w).splice(i, 1); gid_('catHfList_' + w).innerHTML = catHfListHtml_(w); }
+
+/* ---- Add MANY photos at once: each photo gets its own design / size / rate row (auto-filled from the photo) ---- */
+let catBulk = [], catBulkSeq = 0;
+function catPickMany(){
+  const i = document.createElement('input');
+  i.type = 'file'; i.accept = 'image/*'; i.multiple = true;
+  i.onchange = ()=>{ if(i.files && i.files.length) openCatBulk([...i.files]); };
+  i.click();
+}
+function closeCatBulk(){
+  const o = gid_('catBulkOv'); if(o) o.remove();
+  catBulk.forEach(x=>{ try{ URL.revokeObjectURL(x.url); }catch(e){} });
+  catBulk = []; catBulkHideFor = [];
+}
+function catBulkCount_(){
+  const b = gid_('catBulkSaveBtn'); if(!b || b.disabled) return;
+  const n = catBulk.filter(x=>!x.saved).length;
+  b.textContent = n ? `Save All (${n})` : 'Done';
+}
+function openCatBulk(files){
+  closeCatForm();
+  if(!gid_('catBulkOv')){
+    catBulkHideFor = [];
+    const ov = document.createElement('div');
+    ov.className = 'modal-ov'; ov.id = 'catBulkOv';
+    ov.innerHTML = `<div class="modal-sheet">
+      <div class="voice-head"><b>Add Many Photos</b><button class="voice-x" onclick="closeCatBulk()">✕</button></div>
+      <div id="catBulkMsg"></div>
+      <div class="subtle fgap">Design number, size and rate are read from each photo automatically. Please check them once, then tap Save All.</div>
+      <label>Brand (optional — same for all photos)</label>
+      <input id="catBulkBrand" class="fgap" list="brandList">
+      <div id="cbRows"></div>
+      <button type="button" class="btn-pill ghost fgap" style="margin-top:10px" onclick="catPickMany()">＋ Add more photos</button>
+      ${catHfBox_('b')}
+      <button class="primary" id="catBulkSaveBtn" onclick="catBulkSave()">Save All</button>
+    </div>`;
+    document.body.appendChild(ov);
+    ov.addEventListener('click', e=>{ if(e.target === ov && !catBulk.length) closeCatBulk(); });
+  }
+  const rows = gid_('cbRows');
+  files.forEach(file=>{
+    const x = { id:++catBulkSeq, file, url:URL.createObjectURL(file), saved:false };
+    catBulk.push(x);
+    const d = document.createElement('div');
+    d.className = 'cb-row'; d.id = 'cbRow_' + x.id;
+    d.innerHTML = `<div class="cb-th"><img src="${x.url}" alt=""></div>
+      <div class="cb-f">
+        <input id="cbN_${x.id}" placeholder="Design number *">
+        <div class="two"><input id="cbS_${x.id}" placeholder="Size e.g. 32/36"><input id="cbR_${x.id}" type="number" inputmode="decimal" placeholder="Rate"></div>
+        <div class="subtle" id="cbT_${x.id}"></div>
+      </div>
+      <button class="cb-x" onclick="catBulkRemove(${x.id})" title="Remove">✕</button>`;
+    rows.appendChild(d);
+  });
+  catBulkCount_();
+  files.forEach(file=>{ const x = catBulk.find(y=>y.file === file); if(x) catBulkOcr_(x); });
+}
+function catBulkRemove(id){
+  const i = catBulk.findIndex(x=>x.id === id); if(i < 0) return;
+  try{ URL.revokeObjectURL(catBulk[i].url); }catch(e){}
+  catBulk.splice(i, 1);
+  const r = gid_('cbRow_' + id); if(r) r.remove();
+  catBulkCount_();
+}
+async function catBulkOcr_(x){
+  const T = gid_('cbT_' + x.id); if(!T) return;
+  if(!navigator.onLine){ T.textContent = 'Offline — please type the details'; return; }
+  T.textContent = '🔍 Reading photo…';
+  try{
+    const f = await catReadPhoto_(x.file);
+    const nm = gid_('cbN_' + x.id), sz = gid_('cbS_' + x.id), rt = gid_('cbR_' + x.id);
+    if(!nm || !catBulk.includes(x)) return;                   // row was removed meanwhile
+    const got = [];
+    if(!nm.value.trim() && f.name){ nm.value = f.name; got.push('Design'); }
+    if(!sz.value.trim() && f.sizes){ sz.value = f.sizes; got.push('Size'); }
+    if(!rt.value.trim() && f.rate){ rt.value = f.rate; got.push('Rate'); }
+    T.textContent = got.length ? '✓ Auto-filled: ' + got.join(', ') : 'Could not read — please type';
+  }catch(e){ console.error('bulk read failed', e); const t2 = gid_('cbT_' + x.id); if(t2) t2.textContent = 'Could not read — please type'; }
+}
+async function catBulkSave(){
+  const msg = gid_('catBulkMsg');
+  const err = h=>{ msg.innerHTML = `<div class="msg err">${h}</div>`; };
+  const todo = catBulk.filter(x=>!x.saved);
+  if(!todo.length){ closeCatBulk(); render(); return; }
+  let missing = 0;
+  todo.forEach(x=>{ const r = gid_('cbRow_' + x.id), ok = gid_('cbN_' + x.id).value.trim(); if(r) r.classList.toggle('bad', !ok); if(!ok) missing++; });
+  if(missing) return err(`Please enter the design number for ${missing} photo${missing > 1 ? 's' : ''}`);
+  if(!navigator.onLine) return err('Internet is needed to upload photos');
+  msg.innerHTML = '';
+  const btn = gid_('catBulkSaveBtn'); btn.disabled = true;
+  const brand = gid_('catBulkBrand').value.trim();
+  const added = []; let fail = 0;
+  for(let k = 0; k < todo.length; k++){
+    const x = todo[k], T = gid_('cbT_' + x.id);
+    btn.textContent = `Uploading ${k + 1} / ${todo.length}…`;
+    if(T) T.textContent = '⏳ Uploading…';
+    try{
+      const id = 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+      const parts = await catUploadImg_(id, await catEncode_(x.file));
+      added.push({ id, createdAt:new Date().toISOString(), parts, imgV:Date.now(),
+        name:gid_('cbN_' + x.id).value.trim(), sizes:gid_('cbS_' + x.id).value.trim(), rate:gid_('cbR_' + x.id).value.trim(),
+        brand, hideFor:catBulkHideFor.slice() });
+      x.saved = true;
+      if(T) T.textContent = '✓ Saved';
+    }catch(e){
+      fail++;
+      if(T) T.textContent = '✗ Failed — tap Save again';
+    }
+  }
+  if(added.length){
+    catalog.unshift(...added);
+    await saveCatalog();
+    await logActivity('Catalog Designs Added', added.length + ' designs (bulk): ' + added.map(a=>a.name).join(', '));
+  }
+  btn.disabled = false;
+  // finished rows disappear from the retry list
+  catBulk.filter(x=>x.saved).forEach(x=>{ const r = gid_('cbRow_' + x.id); if(r) r.remove(); try{ URL.revokeObjectURL(x.url); }catch(e){} });
+  catBulk = catBulk.filter(x=>!x.saved);
+  if(!fail){ closeCatBulk(); render(); return; }
+  catBulkCount_(); render();
+  err(`${added.length} saved, ${fail} failed. Please check internet and tap Save again for the rest.`);
 }
 async function saveCatForm(next){
   const msg = gid_('catFormMsg');
@@ -5219,20 +5599,24 @@ async function saveCatForm(next){
   try{
     if(catFile){
       const du = await catEncode_(catFile);
-      const parts = await catUploadImg_(it.id, du);
-      it.parts = parts; it.imgV = Date.now();
-      catImgMem_[catKey_(it)] = du; idbSet_(catKey_(it), du);
+      const oldFile = it.fileId, oldParts = it.parts || 0;
+      const n = await catUploadImg_(it.id, du);
+      it.parts = n; it.imgV = Date.now(); delete it.fileId;
+      if(oldFile){ postToSheet_({ action:'deleteCatalogImage', fileId:oldFile }).catch(()=>{}); }   // clean up an old Drive copy, if there was one
+      for(let i = n; i < oldParts; i++){ postToSheet_({ key:'catimg_' + it.id + '_' + i, value:'' }).catch(()=>{}); }
     }
   }catch(e){ btn.disabled = false; btn.textContent = 'Save'; return err('Photo upload failed — please check internet and try again'); }
+
   it.name = name;
   it.sizes = gid_('catSizes').value.trim();
   it.rate = gid_('catRate').value.trim();
   it.brand = gid_('catBrand').value.trim();
+  it.hideFor = catHideFor.slice();
   if(catEditId){ const h = gid_('catHidden'); it.hidden = !!(h && h.checked); }
   else catalog.unshift(it);
   await saveCatalog();
   await logActivity(catEditId ? 'Catalog Design Edited' : 'Catalog Design Added', name);
-  const keep = { sizes:it.sizes, rate:it.rate, brand:it.brand };
+  const keep = { sizes:it.sizes, rate:it.rate, brand:it.brand, hideFor:it.hideFor };
   const wasEdit = !!catEditId;
   closeCatForm();
   render();
@@ -5241,11 +5625,12 @@ async function saveCatForm(next){
 async function deleteCatDesign(){
   const it = catalog.find(x=>x.id === catEditId);
   if(!it || !confirm(`Delete design "${it.name}" from the catalog?`)) return;
-  const parts = it.parts || 0, id = it.id;
+  const parts = it.parts || 0, id = it.id, fileId = it.fileId;
   catalog = catalog.filter(x=>x.id !== id);
   catSel.delete(id);
   await saveCatalog();
   await logActivity('Catalog Design Deleted', it.name);
+  if(fileId){ try{ await postToSheet_({ action:'deleteCatalogImage', fileId:fileId }); }catch(e){} }
   for(let i = 0; i < parts; i++){ try{ await postToSheet_({ key:'catimg_' + id + '_' + i, value:'' }); }catch(e){} }
   closeCatForm(); render();
 }
@@ -5444,27 +5829,61 @@ async function dashRefresh_(){
    PUBLIC CATALOG PAGE  (opened from  <app link>?catalog=1  — no login, no app screens)
    ===================================================================== */
 let pubCart = [];          // [{id, rows:[{size, qty, unit}]}]
-let pubSearch = '';
+let pubSearch = '', pubShow = 150;
 let pubSheetMode = null;   // 'cart' | index of cart entry (single item)
 let pubLastOrder = null;
 const pubIds_ = (()=>{ try{ const v = new URLSearchParams(location.search).get('ids'); return v ? v.split(',').filter(Boolean) : null; }catch(e){ return null; } })();
 function pubSave_(){ try{ localStorage.setItem('ssa_pub_cart', JSON.stringify(pubCart)); }catch(e){} }
+function pubId_(){ try{ return JSON.parse(localStorage.getItem('ssa_pub_id') || 'null'); }catch(e){ return null; } }
+function pubVisible_(c){
+  if(c.hidden) return false;
+  const who = pubId_();
+  if(c.hideFor && c.hideFor.length) return !!who && !catHiddenFor_(c, who);   // not identified yet -> stay hidden
+  return true;
+}
+function pubOpenGate_(again){
+  const old = gid_('pubGate'); if(old) old.remove();
+  const who = pubId_() || {};
+  const ov = document.createElement('div'); ov.className = 'modal-ov'; ov.id = 'pubGate'; ov.style.zIndex = 9500;
+  ov.innerHTML = `<div class="modal-sheet">
+    <div class="voice-head"><b>Welcome</b>${again ? '<button class="voice-x" id="pgX">✕</button>' : ''}</div>
+    <div class="subtle fgap">Please enter your name and mobile number to open the catalog.</div>
+    <div id="pgMsg"></div>
+    <label>Your name *</label><input id="pgName" class="fgap" value="${escapeHtml(who.name || '')}">
+    <label>Mobile *</label><input id="pgPhone" class="fgap" inputmode="tel" value="${escapeHtml(who.phone || '')}">
+    <button class="primary" id="pgGo">Open Catalog</button></div>`;
+  document.body.appendChild(ov);
+  if(again){ gid_('pgX').onclick = ()=>ov.remove(); }
+  gid_('pgGo').onclick = ()=>{
+    const name = gid_('pgName').value.trim(), phone = gid_('pgPhone').value.trim();
+    if(!name || catNormMob_(phone).length < 10){ gid_('pgMsg').innerHTML = '<div class="msg err">Please enter your name and a 10-digit mobile number</div>'; return; }
+    try{
+      localStorage.setItem('ssa_pub_id', JSON.stringify({ name, phone }));
+      const cu = JSON.parse(localStorage.getItem('ssa_pub_cust') || '{}') || {};
+      if(!cu.name) cu.name = name; if(!cu.phone) cu.phone = phone;
+      localStorage.setItem('ssa_pub_cust', JSON.stringify(cu));
+    }catch(e){}
+    ov.remove();
+    pubCart = pubCart.filter(e=>{ const c = catalog.find(z=>z.id === e.id); return c && pubVisible_(c); }); pubSave_();
+    pubShell_();
+  };
+}
 function pubItems_(){
-  let l = catalog.filter(c=>!c.hidden);
+  let l = catalog.filter(pubVisible_);
   if(pubIds_) l = l.filter(c=>pubIds_.includes(c.id));
   const q = pubSearch.trim().toLowerCase();
   return q ? l.filter(c=>(c.name + ' ' + (c.sizes||'') + ' ' + (c.brand||'')).toLowerCase().includes(q)) : l;
 }
 function pubGrid_(){
   const g = gid_('pubGrid'); if(!g) return;
-  const l = pubItems_();
+  const all = pubItems_(), l = all.slice(0, pubShow);
   g.innerHTML = l.length ? `<div class="cat-grid">${l.map(c=>{
     const inCart = pubCart.some(e=>e.id === c.id), r = catRate_(c);
     return `<div class="cat-card" style="cursor:default">
       <div class="cat-img" onclick="pubZoom('${c.id}')" style="cursor:zoom-in"><img data-cid="${c.id}" alt=""></div>
       <div class="cat-meta"><div class="cat-rate">${r ? 'Rate: ₹' + r : ''}</div><div class="cat-name">${escapeHtml(catTitle_(c))}</div></div>
       <button class="pub-add ${inCart ? 'in' : ''}" onclick="pubAdd('${c.id}')">${inCart ? '✓ In Order · Edit' : '＋ Add to Order'}</button>
-    </div>`; }).join('')}</div>` : `<div class="empty">${catalog.length ? 'No design found' : 'Loading catalog…'}</div>`;
+    </div>`; }).join('')}</div>${all.length > l.length ? `<div style="text-align:center;margin:14px 0"><button class="btn-pill ghost" onclick="pubShow+=150;pubGrid_()">Show more (${all.length - l.length} more)</button></div>` : ''}` : `<div class="empty">${catalog.length ? 'No design found' : 'Loading catalog…'}</div>`;
   catHydrate_(g);
 }
 function pubFab_(){
@@ -5477,8 +5896,9 @@ function pubShell_(){
     <div class="pub-head">
       <img src="${COMPANY_LOGO_B64}" alt="">
       <div class="t"><b>${escapeHtml(COMPANY_NAME)}</b><span>Catalog — choose designs and place your order</span></div>
-      <input id="pubSearchInp" placeholder="Search design / size" oninput="pubSearch=this.value;pubGrid_()">
+      <input id="pubSearchInp" placeholder="Search design / size" oninput="pubSearch=this.value;pubShow=150;pubGrid_()">
     </div>
+    ${catalog.some(c=>c.hideFor && c.hideFor.length) && pubId_() ? `<div class="subtle" style="text-align:right;padding:4px 10px"><a href="#" onclick="pubOpenGate_(true);return false">👤 ${escapeHtml(pubId_().name || '')} · change</a></div>` : ''}
     <div id="pubGrid"></div>
     <button class="fab" id="pubFab" style="display:none" onclick="pubOpenSheet_('cart')"></button>`;
   pubGrid_(); pubFab_();
@@ -5489,11 +5909,12 @@ async function initPublicCatalog_(){
   try{ pubCart = JSON.parse(localStorage.getItem('ssa_pub_cart') || '[]') || []; }catch(e){ pubCart = []; }
   pubShell_();
   try{
-    const raw = await storageGet('catalog');
-    if(raw){ catalog = JSON.parse(raw) || []; }
+    const got = await catLoadAll_();
+    if(got) catalog = got.list;
   }catch(e){ console.error('catalog load', e); }
-  pubCart = pubCart.filter(e=>catalog.some(c=>c.id === e.id));
+  pubCart = pubCart.filter(e=>{ const c = catalog.find(z=>z.id === e.id); return c && pubVisible_(c); });
   pubShell_();
+  if(catalog.some(c=>c.hideFor && c.hideFor.length) && !pubId_()) pubOpenGate_(false);
 }
 function pubToast_(m){ showInAppToast_(m); }
 function pubAdd(id){
@@ -5597,7 +6018,7 @@ function pubZoom(id){
   ov.addEventListener('click', e=>{ if(e.target === ov) close(); });
   gid_('pzX').onclick = close;
   gid_('pzAdd').onclick = ()=>{ close(); pubAdd(id); };
-  catLimit_(()=>catGetImg_(it)).then(src=>{ const i = gid_('pzImg'); if(i && src) i.src = src; });
+  catLimit_(()=>catGetImg_(it, true)).then(src=>{ const i = gid_('pzImg'); if(i && src) i.src = src; });
 }
 
 async function pubFetchKey_(key){
@@ -5624,16 +6045,63 @@ async function pubSendOrder_(order){
 function pubOrderRows_(order){
   return order.lines.map(l=>({ designNumber:l.design, colour:l.colour || '', size:l.size, brand:l.brand || '', qty:l.qty, unit:l.unit, pricePerPcs:l.rate ? String(l.rate) : '' }));
 }
-function pubPdf_(order){
+const pubThumb_ = {};
+function pubShrink_(src){
+  return new Promise(res=>{
+    const im = new Image();
+    im.onload = ()=>{
+      const sc = Math.min(1, 160 / im.height), c = document.createElement('canvas');
+      c.width = Math.max(1, Math.round(im.width * sc)); c.height = Math.max(1, Math.round(im.height * sc));
+      c.getContext('2d').drawImage(im, 0, 0, c.width, c.height);
+      res({ d:c.toDataURL('image/jpeg', 0.7), w:c.width, h:c.height });
+    };
+    im.onerror = ()=>res(null);
+    im.src = src;
+  });
+}
+async function pubLoadThumbs_(order){
+  const items = [...new Set(order.lines.map(l=>l.itemId))].map(id=>catalog.find(c=>c.id === id)).filter(Boolean);
+  const need = items.filter(it=>it.fileId && !pubThumb_[it.id]);
+  if(need.length && navigator.onLine){
+    try{
+      const res = await postToSheet_({ action:'getCatalogImages', fileIds:need.map(i=>i.fileId) });
+      const d = await res.json();
+      if(d && d.ok && d.images){ for(const it of need){ if(d.images[it.fileId]) pubThumb_[it.id] = await pubShrink_(d.images[it.fileId]); } }
+    }catch(e){ console.error('thumbnails for PDF failed', e); }
+  }
+  for(const it of items.filter(i=>!i.fileId && i.parts && !pubThumb_[i.id])){
+    try{ const src = await catGetImg_(it); if(src) pubThumb_[it.id] = await pubShrink_(src); }catch(e){}
+  }
+  return pubThumb_;
+}
+async function pubPdf_(order){
   const rows = pubOrderRows_(order), hdr = unitHdr_(rows);
   const tableRows = rows.map(b=>[b.designNumber, b.colour || '-', b.size, b.brand || '-', qtyCell_(b, hdr)]);
   const pp = pdfWithPrice_(['Design Number', 'Colour', 'Size', 'Brand', hdr], tableRows, rows, hdr);
   const sub = 'Catalog Order' + (order.city ? '   |   ' + order.city : '') + (order.phone ? '   |   Ph: ' + order.phone : '');
-  const blob = buildPdfBlob(order.customerName, sub, pp.columns, pp.tableRows, `${t('total')}: ${totalsPdf_(rows)}${amtFooter_(pp)}`, { heading:'Order' });
+  let cols = pp.columns, trs = pp.tableRows;
+  const extra = { heading:'Order' };
+  let thumbs = {};
+  try{ thumbs = await pubLoadThumbs_(order); }catch(e){}
+  const imgs = order.lines.map(l=>thumbs[l.itemId] || null);
+  if(imgs.some(Boolean)){                       // small catalog photo in the first column
+    cols = ['Photo'].concat(cols); trs = trs.map(r=>[''].concat(r));
+    extra.columnStyles = { 0:{ cellWidth:16 } };
+    extra.styles = { valign:'middle' };
+    extra.didParseCell = d=>{ if(d.section === 'body' && d.column.index === 0) d.cell.styles.minCellHeight = 19; };
+    extra.didDrawCell = d=>{
+      if(d.section !== 'body' || d.column.index !== 0) return;
+      const im = imgs[d.row.index]; if(!im) return;
+      const k = Math.min(14 / im.w, 17 / im.h), w = im.w * k, h = im.h * k;
+      d.doc.addImage(im.d, 'JPEG', d.cell.x + (d.cell.width - w) / 2, d.cell.y + (d.cell.height - h) / 2, w, h);
+    };
+  }
+  const blob = buildPdfBlob(order.customerName, sub, cols, trs, `${t('total')}: ${totalsPdf_(rows)}${amtFooter_(pp)}`, extra);
   return { blob, name:`Order_${pdfNamePart_(order.customerName, false) || 'CUSTOMER'}.pdf`, rows };
 }
-function pubShowPdf_(order){
-  const p = pubPdf_(order);
+async function pubShowPdf_(order){
+  pubToast_('Preparing PDF…');
+  const p = await pubPdf_(order);
   if(!p.blob){ alert('Could not create the PDF. Please check your internet connection and try again.'); return; }
   showPdfActions_(p.blob, p.name, `Order — ${order.customerName}`, `Order — ${order.customerName}, ${t('total')} ${totalsUi_(p.rows)}`);
 }
