@@ -50,7 +50,7 @@ try {
   console.error('Push setup skipped in service worker', e);
 }
 
-const CACHE_NAME = 'ssa-app-v19';
+const CACHE_NAME = 'ssa-app-v20';
 const APP_SHELL = [
   './',
   './index.html',
@@ -101,7 +101,7 @@ self.addEventListener('fetch', (event) => {
           }
           return res;
         })
-        .catch(() => caches.match(req))
+        .catch(() => caches.match(req, { ignoreSearch: true }))
     );
     return;
   }
