@@ -682,6 +682,13 @@ let loginWaitingEmail = null; // set while showing the "waiting for approval" sc
 // name-only fallback (no Google account, no email) predates the approval
 // system and is treated as unrestricted too. Everyone else needs the owner
 // to have explicitly switched on delete rights for their account.
+// Order locations are visible to the owner, and to staff the owner has switched "Location" on for in the Approvals tab.
+function canCurrentUserSeeLoc_(){
+  if(!currentStaff || !currentStaff.mobile) return false;
+  if(currentStaff.mobile.toLowerCase() === OWNER_EMAIL.toLowerCase()) return true;
+  const entry = staffApprovals.find(s=>s.email === currentStaff.mobile);
+  return !!(entry && entry.status === 'approved' && entry.canSeeLocation);
+}
 function canCurrentUserDelete(){
   if(!currentStaff) return false;
   if(!currentStaff.mobile) return true;
@@ -777,7 +784,7 @@ const I18N = {
     revoke_access:'Revoke Access', badge_pending:'Pending', badge_approved:'Approved', badge_rejected:'Rejected',
     reject_confirm:'Reject access for', revoke_confirm:'Revoke app access for', revoke_confirm2:'They will need to be re-approved to log in again.',
     perm_delete_confirm:"Permanently delete this trashed order? This cannot be undone.",
-    delete_allowed:'Can Delete Orders', delete_blocked:'Delete Blocked', allow_delete:'Allow Delete', block_delete:'Block Delete',
+    loc_allowed:'Can See Order Location', loc_blocked:'Location Hidden', allow_loc:'Allow Location', block_loc:'Block Location', delete_allowed:'Can Delete Orders', delete_blocked:'Delete Blocked', allow_delete:'Allow Delete', block_delete:'Block Delete',
     delete_not_allowed:"You don't have permission to delete orders. Ask the owner to grant it from the Approvals tab.",
 
     customer_name:'Customer Name', enter_customer_name:'Enter customer name', city_name:'City Name (optional)', enter_city_name:'Enter city name',
@@ -877,7 +884,7 @@ const I18N = {
     revoke_access:'एक्सेस हटाएं', badge_pending:'पेंडिंग', badge_approved:'अप्रूव्ड', badge_rejected:'रिजेक्टेड',
     reject_confirm:'इसकी एक्सेस रिजेक्ट करें —', revoke_confirm:'इसकी ऐप एक्सेस हटाएं —', revoke_confirm2:'दोबारा लॉगिन करने के लिए फिर से मंज़ूरी लेनी होगी।',
     perm_delete_confirm:'इस डिलीट किए गए ऑर्डर को हमेशा के लिए हटाएं? यह वापस नहीं होगा।',
-    delete_allowed:'ऑर्डर डिलीट कर सकते हैं', delete_blocked:'डिलीट बंद है', allow_delete:'डिलीट की इजाज़त दें', block_delete:'डिलीट रोकें',
+    loc_allowed:'ऑर्डर की लोकेशन देख सकते हैं', loc_blocked:'लोकेशन बंद है', allow_loc:'लोकेशन की इजाज़त दें', block_loc:'लोकेशन रोकें', delete_allowed:'ऑर्डर डिलीट कर सकते हैं', delete_blocked:'डिलीट बंद है', allow_delete:'डिलीट की इजाज़त दें', block_delete:'डिलीट रोकें',
     delete_not_allowed:'आपको ऑर्डर डिलीट करने की इजाज़त नहीं है। मालिक से Approvals टैब से इजाज़त लेने को कहें।',
 
     customer_name:'ग्राहक का नाम', enter_customer_name:'ग्राहक का नाम लिखें', city_name:'शहर का नाम (वैकल्पिक)', enter_city_name:'शहर का नाम लिखें',
@@ -2200,11 +2207,13 @@ function renderApprovals(main){
       <div style="font-size:13px;color:#5b6472;">${escapeHtml(s.email)}</div>
       <div style="margin-top:6px;">
         <span class="set-pill ${s.canDelete ? 'done' : 'pending'}">${s.canDelete ? t('delete_allowed') : t('delete_blocked')}</span>
+        <span class="set-pill ${s.canSeeLocation ? 'done' : 'pending'}">📍 ${s.canSeeLocation ? t('loc_allowed') : t('loc_blocked')}</span>
       </div>
       <div style="font-size:12px;color:#5b6472;margin-top:10px;margin-bottom:4px;">Tabs this staff can see (Order + Article always visible):</div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;">${tabToggles}</div>
       <div class="action-row" style="margin-top:10px;">
         <button class="action-btn ${s.canDelete ? 'del' : 'wa'}" onclick="toggleDeletePermission('${s.email.replace(/'/g,"\\'")}')">${s.canDelete ? t('block_delete') : t('allow_delete')}</button>
+        <button class="action-btn ${s.canSeeLocation ? 'del' : 'wa'}" onclick="toggleLocPermission('${s.email.replace(/'/g,"\\'")}')">📍 ${s.canSeeLocation ? t('block_loc') : t('allow_loc')}</button>
         <button class="action-btn del" onclick="revokeStaff('${s.email.replace(/'/g,"\\'")}')">${t('revoke_access')}</button>
       </div>
     </div>
@@ -2237,9 +2246,20 @@ async function approveStaff(email){
   s.status = 'approved';
   s.approvedAt = new Date().toISOString();
   if(s.canDelete === undefined) s.canDelete = false; // owner must explicitly grant delete rights
+  if(s.canSeeLocation === undefined) s.canSeeLocation = false; // owner must explicitly grant location view
   if(!Array.isArray(s.allowedTabs)) s.allowedTabs = []; // owner must explicitly switch tabs on
   await saveApprovals();
   await logActivity('Staff Approved', `${s.name} (${email})`);
+  render();
+}
+
+async function toggleLocPermission(email){
+  const s = staffApprovals.find(x=>x.email===email);
+  if(!s) return;
+  markBusy(t('processing_word'));
+  s.canSeeLocation = !s.canSeeLocation;
+  await saveApprovals();
+  await logActivity(s.canSeeLocation ? 'Location Access Granted' : 'Location Access Blocked', `${s.name} (${email})`);
   render();
 }
 
@@ -2946,8 +2966,19 @@ async function orderLocation_(){
   return (r && r.err) ? r : (lastLoc_ || { err:'unavailable' });
 }
 function isOwnerNow_(){ return !!(currentStaff && currentStaff.mobile && currentStaff.mobile.toLowerCase() === OWNER_EMAIL.toLowerCase()); }
+function pendLocHtml_(rows){
+  if(!canCurrentUserSeeLoc_()) return '';
+  return orderLocHtml_(rows) || `<div class="section-label">📍 Order location</div><div class="li"><span class="subtle">Not recorded for this order</span></div>`;
+}
+function pendLocBtn_(rows){
+  if(!canCurrentUserSeeLoc_()) return '';
+  const r = rows.filter(b=>b.lat !== undefined && b.lat !== '' && isFinite(Number(b.lat)) && isFinite(Number(b.lng)))
+    .sort((a,b)=>new Date(b.orderedAt) - new Date(a.orderedAt))[0];
+  if(!r) return '';
+  return `<a class="action-btn pr" style="text-decoration:none;text-align:center" href="https://www.google.com/maps?q=${Number(r.lat)},${Number(r.lng)}" target="_blank" rel="noopener">📍 Location</a>`;
+}
 function orderLocHtml_(rows){
-  if(!isOwnerNow_()) return '';
+  if(!canCurrentUserSeeLoc_()) return '';
   const seen = {}, list = [];
   rows.forEach(b=>{ if(b.orderedAt && !seen[b.orderedAt] && !b.fromCatalog && (b.lat !== undefined && b.lat !== '' || b.locErr)){ seen[b.orderedAt] = 1; list.push(b); } });
   if(!list.length) return '';
@@ -2980,7 +3011,7 @@ async function shareNewOrderPdf(cname, rows, total){
   const hdr = unitHdr_(rows);
   const tableRows = rows.map(b=>[b.designNumber, b.colour||'-', b.size, b.brand||'-', qtyCell_(b, hdr)]);
   const pp = pdfWithPrice_(['Design Number','Colour','Size','Brand',hdr], tableRows, rows, hdr);
-  const blob = buildPdfBlob(`${cname}`, `Subhash Sales Agencies · ${new Date().toLocaleDateString('en-IN')}`, pp.columns, pp.tableRows, `${t('total')}: ${totalsPdf_(rows)}${amtFooter_(pp)}`, { heading: 'Order' });
+  const blob = buildPdfBlob(`${cname}`, `Subhash Sales Agencies · ${pdfOrderDateText_(rows)}`, pp.columns, pp.tableRows, `${t('total')}: ${totalsPdf_(rows)}${amtFooter_(pp)}`, { heading: 'Order' });
   if(!blob) return;
   const brandPart = pdfNamePart_(rows[0].brand, true);
   const fileName = `Order_${pdfNamePart_(cname, false) || 'CUSTOMER'}${brandPart ? '_'+brandPart : ''}.pdf`;
@@ -3997,6 +4028,12 @@ function dispatchDateKey(iso){
   const y = d.getFullYear(), m = String(d.getMonth()+1).padStart(2,'0'), day = String(d.getDate()).padStart(2,'0');
   return `${y}-${m}-${day}`;
 }
+// Text for the date line under the customer name in order PDFs (the order's own date, or a range).
+function pdfOrderDateText_(rows){
+  const ks = [...new Set((rows || []).map(b=>b.orderedAt).filter(Boolean).map(dispatchDateKey))].sort();
+  if(!ks.length) return dispatchDateLabel(dispatchDateKey(new Date().toISOString()));
+  return ks.length === 1 ? dispatchDateLabel(ks[0]) : dispatchDateLabel(ks[0]) + ' to ' + dispatchDateLabel(ks[ks.length - 1]);
+}
 function dispatchDateLabel(key){
   const [y,m,d] = key.split('-').map(Number);
   return new Date(y, m-1, d).toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' });
@@ -4324,7 +4361,9 @@ function renderPendingOrders(main){
           </span>
         </div>
         ${lines}
+        ${pendLocHtml_(rows)}
         <div class="action-row">
+          ${pendLocBtn_(rows)}
           <button class="action-btn wa" onclick="shareWhatsAppPendingDated('${cname.replace(/'/g,"\\'")}','${dk}')">${t('whatsapp')}</button>
           <button class="action-btn pr" onclick="printPendingOrderDated('${cname.replace(/'/g,"\\'")}','${dk}')">${t('print')}</button>
           <button class="action-btn pr" onclick="startEditPendingGroup('${cname.replace(/'/g,"\\'")}','${dk}')">${t('edit_btn')}</button>
@@ -4548,7 +4587,7 @@ function buildPendingOrderPdf(cname){
   const tableRows = rows.map(b=>[b.designNumber, b.colour||'-', b.size, b.brand||'-', qtyCell_(b, hdr)]);
   const pp = pdfWithPrice_(['Design Number','Colour','Size','Brand',hdr], tableRows, rows, hdr);
   return {
-    blob: buildPdfBlob(`${cname}`, `Subhash Sales Agencies · ${new Date().toLocaleDateString('en-IN')}`, pp.columns, pp.tableRows, `${t('total')}: ${totalsPdf_(rows)}${amtFooter_(pp)}`, { heading: 'Order' }),
+    blob: buildPdfBlob(`${cname}`, `Subhash Sales Agencies · ${pdfOrderDateText_(rows)}`, pp.columns, pp.tableRows, `${t('total')}: ${totalsPdf_(rows)}${amtFooter_(pp)}`, { heading: 'Order' }),
     total
   };
 }
