@@ -2319,6 +2319,7 @@ function handleOrderFormArrowNav(e, fieldId){
 }
 
 function renderBook(main){
+  warmLocation_();
   const cartBlocks = draftCart.map((d, idx)=>{
     const chips = d.sizes.map((s,si)=>`<span class="chip">${escapeHtml(s.size)} · ${s.qty} ${unitUi_(unitOf_(s))}${s.price ? ' · ₹'+escapeHtml(String(s.price)) : ''}${(unitOf_(s)==='pcs' && parseFloat(s.price)>0) ? ' = ₹'+fmtAmt_(s.qty*parseFloat(s.price)) : ''} <button class="x" onclick="removeCartSize(${idx},${si})">×</button></span>`).join('');
     return `<div class="design-block">
@@ -2383,7 +2384,7 @@ function renderBook(main){
     <div class="card">
       <h2>${t('designs_in_order')} (${draftCart.length})</h2>
       ${cartBlocks || `<div class="empty">${t('no_design_added')}</div>`}
-      ${draftCart.length ? `<button class="primary" id="saveOrderBtn" onclick="saveOrder()">${t('save_order')}</button>` : ''}
+      ${draftCart.length ? `<div class="subtle" style="margin:6px 0">📍 Your location is saved with the order</div><button class="primary" id="saveOrderBtn" onclick="saveOrder()">${t('save_order')}</button>` : ''}
     </div>
   `;
 }
@@ -2852,6 +2853,7 @@ async function saveOrder(){
   if(saveBtn){ saveBtn.disabled = true; saveBtn.textContent = t('saving_word'); }
 
   try{
+    const loc = await orderLocation_();
     const now = new Date().toISOString();
     let totalSets = 0;
     draftCart.forEach(d=>{
@@ -2871,7 +2873,8 @@ async function saveOrder(){
           status: 'pending',
           orderedAt: now,
           dispatchedAt: null,
-          orderedBy: currentStaff ? { name: currentStaff.name, mobile: currentStaff.mobile } : null
+          orderedBy: currentStaff ? { name: currentStaff.name, mobile: currentStaff.mobile } : null,
+          ...(loc && loc.lat ? { lat: loc.lat, lng: loc.lng, locAcc: loc.acc, locAt: new Date(loc.at).toISOString() } : { locErr: (loc && loc.err) || 'unavailable' })
         });
       });
     });
@@ -2903,12 +2906,65 @@ async function saveOrder(){
     qtyTouched = false;
     render();
     const m2 = document.getElementById('bookMsg');
-    if(m2) m2.innerHTML = `<div class="msg ok">${count} ${t('designs_saved')}</div>`;
+    if(m2) m2.innerHTML = `<div class="msg ok">${count} ${t('designs_saved')}</div>` + (loc && loc.lat ? '' : `<div class="msg err">📍 ${loc && loc.err === 'denied' ? 'Location is OFF for this app — please allow Location in the phone/browser settings so the owner can see where orders are booked from.' : 'Could not get your location this time (no GPS signal). Order is saved.'}</div>`);
 
     await sharePromise;
   } finally {
     isSavingOrder = false;
   }
+}
+
+/* ---------------- ORDER LOCATION ----------------
+   Every order saves the phone's location at the moment it is booked (lat / lng / accuracy), so the owner can see
+   WHERE it was booked from. The location is asked in the background while the Order tab is open (so saving is never
+   slowed down); if the staff member refuses permission or the phone has no GPS signal, the order still saves normally
+   and the owner just sees "Location not shared". */
+let lastLoc_ = null, locBusy_ = null;
+function getLocOnce_(timeout, maxAge){
+  return new Promise(res=>{
+    if(!navigator.geolocation){ res({ err:'unavailable' }); return; }
+    try{
+      navigator.geolocation.getCurrentPosition(
+        p=>res({ lat:+p.coords.latitude.toFixed(6), lng:+p.coords.longitude.toFixed(6), acc:Math.round(p.coords.accuracy || 0), at:Date.now() }),
+        e=>res({ err: e && e.code === 1 ? 'denied' : 'unavailable' }),
+        { enableHighAccuracy:true, timeout:timeout, maximumAge:maxAge });
+    }catch(e){ res({ err:'unavailable' }); }
+  });
+}
+function warmLocation_(){
+  if(locBusy_ || (lastLoc_ && lastLoc_.lat && Date.now() - lastLoc_.at < 45000)) return;
+  locBusy_ = getLocOnce_(10000, 20000).then(r=>{
+    if(r.lat || !(lastLoc_ && lastLoc_.lat)) lastLoc_ = r;
+    locBusy_ = null;
+  });
+}
+async function orderLocation_(){
+  if(lastLoc_ && lastLoc_.lat && Date.now() - lastLoc_.at < 90000) return lastLoc_;
+  const r = await Promise.race([ locBusy_ || getLocOnce_(2500, 30000), new Promise(res=>setTimeout(()=>res({ err:'unavailable' }), 2800)) ]);
+  if(r && r.lat){ lastLoc_ = r; return r; }
+  if(lastLoc_ && lastLoc_.lat && Date.now() - lastLoc_.at < 15 * 60000) return lastLoc_;   // recent enough, better than nothing
+  return (r && r.err) ? r : (lastLoc_ || { err:'unavailable' });
+}
+function isOwnerNow_(){ return !!(currentStaff && currentStaff.mobile && currentStaff.mobile.toLowerCase() === OWNER_EMAIL.toLowerCase()); }
+function orderLocHtml_(rows){
+  if(!isOwnerNow_()) return '';
+  const seen = {}, list = [];
+  rows.forEach(b=>{ if(b.orderedAt && !seen[b.orderedAt] && !b.fromCatalog && (b.lat !== undefined && b.lat !== '' || b.locErr)){ seen[b.orderedAt] = 1; list.push(b); } });
+  if(!list.length) return '';
+  list.sort((a,b)=>new Date(b.orderedAt) - new Date(a.orderedAt));
+  const lines = list.slice(0, 6).map(b=>{
+    const who = b.orderedBy && b.orderedBy.name ? ' · ' + escapeHtml(b.orderedBy.name) : '';
+    const when = escapeHtml(fmtTime(b.orderedAt));
+    const lat = Number(b.lat), lng = Number(b.lng);
+    if(b.lat !== undefined && b.lat !== '' && isFinite(lat) && isFinite(lng)){
+      const gap = b.locAt ? Math.abs(new Date(b.orderedAt) - new Date(b.locAt)) / 60000 : 0;
+      const old = gap > 3 ? ` <span class="subtle">(location ${Math.round(gap)} min earlier)</span>` : '';
+      const acc = Number(b.locAcc) ? ` <span class="subtle">±${Math.round(Number(b.locAcc))} m</span>` : '';
+      return `<div class="li"><span>📍 ${when}${who}${acc}${old}</span><a href="https://www.google.com/maps?q=${lat},${lng}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="font-weight:700;white-space:nowrap">Open map</a></div>`;
+    }
+    return `<div class="li"><span>📍 ${when}${who}</span><span class="subtle">Location not shared</span></div>`;
+  }).join('');
+  return `<div class="section-label">📍 Order location</div>${lines}`;
 }
 
 // Upper-cases and tidies a name for use inside a file name; with
@@ -4736,6 +4792,7 @@ function renderCustomers(main){
           <button class="undo-link" onclick="undoDispatch('${b.id}')">${t('undo')}</button></div>
         `).join('') : ''}
         ${pendingRows.length ? pendingBlockHtml_(cname, pendingRows) : ''}
+        ${orderLocHtml_(rows)}
       </div>`;
     }
 
@@ -5437,40 +5494,43 @@ function cyrb53_(str){
 }
 function catNormName_(s){ return String(s || '').toLowerCase().replace(/[^a-z0-9\u0900-\u097f]/g, ''); }
 function catNormMob_(s){ return String(s || '').replace(/\D/g, '').slice(-10); }
-function catHashes_(name, mob){
-  const n = catNormName_(name), m = catNormMob_(mob);
-  return { nh: n ? cyrb53_('ssa-n|' + n) : '', mh: m.length >= 10 ? cyrb53_('ssa-m|' + m) : '', tail: m.length >= 10 ? m.slice(-4) : '' };
+function catHashes_(name, mob, email){
+  const n = catNormName_(name), m = catNormMob_(mob), em = String(email || '').trim().toLowerCase();
+  return { nh: n ? cyrb53_('ssa-n|' + n) : '', mh: m.length >= 10 ? cyrb53_('ssa-m|' + m) : '', eh: /^[^@\s]+@[^@\s]+$/.test(em) ? cyrb53_('ssa-e|' + em) : '', tail: m.length >= 10 ? m.slice(-4) : '' };
 }
 function catHiddenFor_(c, who){
   if(!c || !c.hideFor || !c.hideFor.length) return false;
-  const h = catHashes_(who && who.name, who && who.phone);
-  return c.hideFor.some(e=>(e.mh && h.mh && e.mh === h.mh) || (e.nh && h.nh && e.nh === h.nh));
+  const h = catHashes_(who && who.name, who && who.phone, who && who.email);
+  return c.hideFor.some(e=>(e.eh && h.eh && e.eh === h.eh) || (e.mh && h.mh && e.mh === h.mh) || (e.nh && h.nh && e.nh === h.nh));
 }
 let catHideFor = [], catBulkHideFor = [];
 function catHfArr_(w){ return w === 'b' ? catBulkHideFor : catHideFor; }
 function catHfListHtml_(w){
   const a = catHfArr_(w);
-  return a.length ? a.map((e, i)=>`<span class="cat-hf-chip">${escapeHtml(e.label || 'Customer')}${e.tail ? ' · ••' + e.tail : ''}<button type="button" onclick="catHfDel('${w}',${i})">✕</button></span>`).join('')
+  return a.length ? a.map((e, i)=>`<span class="cat-hf-chip">${escapeHtml(e.label || 'Customer')}${e.tail ? ' · ••' + e.tail : ''}${e.eh ? ' · Gmail' : ''}<button type="button" onclick="catHfDel('${w}',${i})">✕</button></span>`).join('')
     : '<span class="subtle">None — every customer can see this design</span>';
 }
 function catHfBox_(w){
   return `<label>Hide from specific customers (optional)</label>
-    <div class="subtle">Add the customer's name and mobile. They will not see this design in the catalog link.</div>
+    <div class="subtle">Add the customer's Gmail (best — it cannot be faked), name and/or mobile. They will not see this design in the catalog link.</div>
     <div class="cat-hf-list" id="catHfList_${w}">${catHfListHtml_(w)}</div>
+    <input id="catHfMail_${w}" class="fgap" inputmode="email" placeholder="Customer Gmail (optional)">
     <div class="two fgap"><input id="catHfName_${w}" placeholder="Customer name"><input id="catHfMob_${w}" inputmode="tel" placeholder="Mobile (10 digits)"></div>
     <button type="button" class="btn-pill ghost fgap" onclick="catHfAdd('${w}')">＋ Add customer</button>
     <div id="catHfMsg_${w}"></div>`;
 }
 function catHfAdd(w){
-  const nm = gid_('catHfName_' + w), mb = gid_('catHfMob_' + w), msg = gid_('catHfMsg_' + w);
-  const name = nm.value.trim(), mob = mb.value.trim();
+  const nm = gid_('catHfName_' + w), mb = gid_('catHfMob_' + w), ml = gid_('catHfMail_' + w), msg = gid_('catHfMsg_' + w);
+  const name = nm.value.trim(), mob = mb.value.trim(), mail = ml.value.trim();
   const bad = t_=>{ msg.innerHTML = `<div class="msg err">${t_}</div>`; };
-  if(!name && !mob) return bad('Enter the customer name and mobile number');
+  if(!name && !mob && !mail) return bad('Enter the customer Gmail, name or mobile number');
   if(mob && catNormMob_(mob).length < 10) return bad('Mobile number must be 10 digits');
-  const h = catHashes_(name, mob);
+  const h = catHashes_(name, mob, mail);
+  if(mail && !h.eh) return bad('Please enter a valid Gmail address');
   const arr = catHfArr_(w);
-  if(!arr.some(e=>(h.mh && e.mh === h.mh) || (!h.mh && h.nh && e.nh === h.nh))) arr.push({ label:name, tail:h.tail, nh:h.nh, mh:h.mh });
-  nm.value = ''; mb.value = ''; msg.innerHTML = '';
+  if(!arr.some(e=>(h.eh && e.eh === h.eh) || (!h.eh && h.mh && e.mh === h.mh) || (!h.eh && !h.mh && h.nh && e.nh === h.nh)))
+    arr.push({ label:name || mail.split('@')[0], tail:h.tail, nh:h.nh, mh:h.mh, eh:h.eh });
+  nm.value = ''; mb.value = ''; ml.value = ''; msg.innerHTML = '';
   gid_('catHfList_' + w).innerHTML = catHfListHtml_(w);
 }
 function catHfDel(w, i){ catHfArr_(w).splice(i, 1); gid_('catHfList_' + w).innerHTML = catHfListHtml_(w); }
@@ -5859,9 +5919,115 @@ let pubSheetMode = null;   // 'cart' | index of cart entry (single item)
 let pubLastOrder = null;
 const pubIds_ = (()=>{ try{ const v = new URLSearchParams(location.search).get('ids'); return v ? v.split(',').filter(Boolean) : null; }catch(e){ return null; } })();
 function pubSave_(){ try{ localStorage.setItem('ssa_pub_cart', JSON.stringify(pubCart)); }catch(e){} }
+/* ---------- Customer catalog link: Google (Gmail) sign-in, once per device ---------- */
+// true  = customer must sign in with a Google account once on each phone / computer before the catalog opens
+// false = catalog opens without any login.  Uses the same Google Client ID as the staff Google login (GOOGLE_CLIENT_ID near the top).
+const CATALOG_LOGIN_REQUIRED = true;
+function catLoginOn_(){ return CATALOG_LOGIN_REQUIRED && googleReady; }
+function pubDev_(){ try{ const d = JSON.parse(localStorage.getItem('ssa_pub_dev') || 'null'); return d && d.token && d.email ? d : null; }catch(e){ return null; } }
+async function gCall_(payload){
+  const r = await fetch(SHEET_SCRIPT_URL, { method:'POST', headers:{ 'Content-Type':'text/plain;charset=utf-8' }, body:JSON.stringify(payload) });
+  return await r.json();
+}
+function pubSignOut_(){
+  try{ localStorage.removeItem('ssa_pub_dev'); localStorage.removeItem('ssa_pub_id'); }catch(e){}
+  try{ if(window.google && google.accounts && google.accounts.id) google.accounts.id.disableAutoSelect(); }catch(e){}
+  pubCart = []; pubSave_(); pubShell_(); pubLoginGate_();
+}
+async function pubCheckDevice_(){
+  const d = pubDev_(); if(!d || !navigator.onLine) return;
+  try{
+    const r = await gCall_({ action:'gCheckDevice', email:d.email, token:d.token });
+    if(r && r.success && r.valid === false){ pubSignOut_(); const m = gid_('gMsg'); if(m) m.innerHTML = '<div class="msg info">Please sign in again.</div>'; }
+  }catch(e){ /* offline / slow — keep working */ }
+}
+function gsiLoad_(){
+  return new Promise((res, rej)=>{
+    if(window.google && google.accounts && google.accounts.id) return res();
+    const sc = document.createElement('script');
+    sc.src = 'https://accounts.google.com/gsi/client'; sc.async = true;
+    sc.onload = ()=>res(); sc.onerror = ()=>rej(new Error('gsi'));
+    document.head.appendChild(sc);
+  });
+}
+function gJwt_(c){
+  try{
+    let p = String(c).split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+    p += '='.repeat((4 - p.length % 4) % 4);
+    return JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(p), ch=>ch.charCodeAt(0))));
+  }catch(e){ return {}; }
+}
+let gCred_ = '';
+function pubLoginGate_(){
+  const old = gid_('pubLoginOv'); if(old) old.remove();
+  const ov = document.createElement('div'); ov.className = 'modal-ov'; ov.id = 'pubLoginOv'; ov.style.zIndex = 9600; ov.style.background = '#EEF3F7';
+  ov.innerHTML = `<div class="modal-sheet"><div class="voice-head"><b>${escapeHtml(COMPANY_NAME)}</b></div><div id="gBody"></div></div>`;
+  document.body.appendChild(ov);
+  gStep1_();
+}
+async function gStep1_(){
+  gid_('gBody').innerHTML = `<div class="subtle fgap">To open the catalog and place an order, please sign in with your Google (Gmail) account. This is needed only once on this phone / computer.</div>
+    <div id="gMsg"></div>
+    <div id="gBtn" style="display:flex;justify-content:center;margin:16px 0 6px;min-height:44px"></div>
+    <div class="subtle" id="gHint" style="text-align:center">Loading Google sign-in…</div>`;
+  try{
+    if(!navigator.onLine) throw new Error('offline');
+    await gsiLoad_();
+    google.accounts.id.initialize({ client_id:GOOGLE_CLIENT_ID, callback:gOnCred_, auto_select:false });
+    google.accounts.id.renderButton(gid_('gBtn'), { theme:'outline', size:'large', text:'signin_with', shape:'pill', width:280 });
+    gid_('gHint').textContent = '';
+  }catch(e){
+    const h = gid_('gHint'); if(h) h.innerHTML = 'Could not load Google sign-in. Please check internet and reload this page.<br>If you opened this link inside WhatsApp, tap ⋮ and choose “Open in Chrome / Safari”.';
+  }
+}
+function gOnCred_(resp){
+  gCred_ = resp && resp.credential || '';
+  const info = gJwt_(gCred_);
+  if(!info.email){ const m = gid_('gMsg'); if(m) m.innerHTML = '<div class="msg err">Google sign-in failed — please try again</div>'; return; }
+  gStep2_(info);
+}
+function gStep2_(info){
+  const cu = (()=>{ try{ return JSON.parse(localStorage.getItem('ssa_pub_cust') || '{}') || {}; }catch(e){ return {}; } })();
+  gid_('gBody').innerHTML = `<div class="msg ok">Signed in as <b>${escapeHtml(info.email)}</b></div>
+    <div id="gMsg"></div>
+    <label>Your name / shop name *</label><input id="gName" class="fgap" value="${escapeHtml(cu.name || info.name || '')}">
+    <label>Mobile number *</label><input id="gPhone" class="fgap" inputmode="tel" maxlength="14" value="${escapeHtml(cu.phone || '')}">
+    <button class="primary" id="gGo">Open Catalog</button>
+    <div style="text-align:center;margin-top:10px"><a href="#" id="gOther">Use another Google account</a></div>`;
+  gid_('gGo').onclick = ()=>gFinish_(info);
+  gid_('gOther').onclick = e=>{ e.preventDefault(); gStep1_(); };
+}
+async function gFinish_(info){
+  const name = gid_('gName').value.trim(), phone = catNormMob_(gid_('gPhone').value);
+  const msg = gid_('gMsg'), btn = gid_('gGo');
+  const err = t_=>{ msg.innerHTML = `<div class="msg err">${t_}</div>`; };
+  if(!name) return err('Please enter your name');
+  if(phone.length !== 10) return err('Please enter a valid 10-digit mobile number');
+  if(!navigator.onLine) return err('Internet is needed for the first-time sign-in');
+  btn.disabled = true; btn.textContent = 'Please wait…'; msg.innerHTML = '';
+  try{
+    const r = await gCall_({ action:'gLogin', idToken:gCred_, name, phone });
+    if(r && r.verified && r.token){
+      const email = String(r.email || info.email).toLowerCase();
+      try{
+        localStorage.setItem('ssa_pub_dev', JSON.stringify({ name, phone, email, token:r.token }));
+        localStorage.setItem('ssa_pub_id', JSON.stringify({ name, phone, email }));
+        const cu = JSON.parse(localStorage.getItem('ssa_pub_cust') || '{}') || {};
+        cu.name = name; cu.phone = phone; localStorage.setItem('ssa_pub_cust', JSON.stringify(cu));
+      }catch(e){}
+      const ov = gid_('pubLoginOv'); if(ov) ov.remove();
+      pubCart = pubCart.filter(e=>{ const c = catalog.find(z=>z.id === e.id); return c && pubVisible_(c); }); pubSave_();
+      pubShell_();
+      return;
+    }
+    err(escapeHtml((r && r.error) || 'Login service is not ready yet. Please contact ' + COMPANY_NAME + '.'));
+  }catch(e){ err('Could not complete sign-in — please check internet and try again'); }
+  btn.disabled = false; btn.textContent = 'Open Catalog';
+}
 function pubId_(){ try{ return JSON.parse(localStorage.getItem('ssa_pub_id') || 'null'); }catch(e){ return null; } }
 function pubVisible_(c){
   if(c.hidden) return false;
+  if(catLoginOn_() && !pubDev_()) return false;                // nothing shows before the Google sign-in is done
   const who = pubId_();
   if(c.hideFor && c.hideFor.length) return !!who && !catHiddenFor_(c, who);   // not identified yet -> stay hidden
   return true;
@@ -5923,7 +6089,8 @@ function pubShell_(){
       <div class="t"><b>${escapeHtml(COMPANY_NAME)}</b><span>Catalog — choose designs and place your order</span></div>
       <input id="pubSearchInp" placeholder="Search design / size" oninput="pubSearch=this.value;pubShow=150;pubGrid_()">
     </div>
-    ${catalog.some(c=>c.hideFor && c.hideFor.length) && pubId_() ? `<div class="subtle" style="text-align:right;padding:4px 10px"><a href="#" onclick="pubOpenGate_(true);return false">👤 ${escapeHtml(pubId_().name || '')} · change</a></div>` : ''}
+    ${catLoginOn_() ? (pubDev_() ? `<div class="subtle" style="text-align:right;padding:4px 10px">👤 ${escapeHtml(pubDev_().name || '')} · <a href="#" onclick="if(confirm('Sign out from this phone? You will need to sign in with Google again.'))pubSignOut_();return false">Not you?</a></div>` : '')
+      : (catalog.some(c=>c.hideFor && c.hideFor.length) && pubId_() ? `<div class="subtle" style="text-align:right;padding:4px 10px"><a href="#" onclick="pubOpenGate_(true);return false">👤 ${escapeHtml(pubId_().name || '')} · change</a></div>` : '')}
     <div id="pubGrid"></div>
     <button class="fab" id="pubFab" style="display:none" onclick="pubOpenSheet_('cart')"></button>`;
   pubGrid_(); pubFab_();
@@ -5933,13 +6100,14 @@ async function initPublicCatalog_(){
   document.title = COMPANY_NAME + ' — Catalog';
   try{ pubCart = JSON.parse(localStorage.getItem('ssa_pub_cart') || '[]') || []; }catch(e){ pubCart = []; }
   pubShell_();
+  if(catLoginOn_()){ if(!pubDev_()) pubLoginGate_(); else pubCheckDevice_(); }
   try{
     const got = await catLoadAll_();
     if(got) catalog = got.list;
   }catch(e){ console.error('catalog load', e); }
   pubCart = pubCart.filter(e=>{ const c = catalog.find(z=>z.id === e.id); return c && pubVisible_(c); });
   pubShell_();
-  if(catalog.some(c=>c.hideFor && c.hideFor.length) && !pubId_()) pubOpenGate_(false);
+  if(!catLoginOn_() && catalog.some(c=>c.hideFor && c.hideFor.length) && !pubId_()) pubOpenGate_(false);
 }
 function pubToast_(m){ showInAppToast_(m); }
 function pubAdd(id){
@@ -5992,7 +6160,8 @@ function pubSheetHtml_(){
   const body = single ? pubEditorHtml_(pubSheetMode) : pubCart.map((_, i)=>pubEditorHtml_(i)).join('');
   const nm = gid_('pubName') ? gid_('pubName').value : (cust.name || '');
   const ct = gid_('pubCity') ? gid_('pubCity').value : (cust.city || '');
-  const ph = gid_('pubPhone') ? gid_('pubPhone').value : (cust.phone || '');
+  const dev_ = catLoginOn_() ? pubDev_() : null;
+  const ph = dev_ ? dev_.phone : (gid_('pubPhone') ? gid_('pubPhone').value : (cust.phone || ''));
   const nt = gid_('pubNote') ? gid_('pubNote').value : '';
   return `<div class="modal-sheet">
     <div class="voice-head"><b>${single ? 'Size &amp; Set' : '🛒 My Order'}</b><button class="voice-x" onclick="pubCloseSheet_()">✕</button></div>
