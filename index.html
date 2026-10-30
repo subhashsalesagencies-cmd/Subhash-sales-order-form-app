@@ -517,6 +517,9 @@
   .modal-sheet .voice-head{ margin-bottom:10px; }
   .cat-prev{ width:120px; aspect-ratio:3/4; background:#E6EDF3; border-radius:8px; overflow:hidden; margin-bottom:8px; display:flex; align-items:center; justify-content:center; font-size:12px; color:#7e8896; }
   .cat-prev img{ width:100%; height:100%; object-fit:cover; }
+  .pend-th{ width:44px; height:58px; flex:0 0 44px; border-radius:6px; overflow:hidden; background:#E6EDF3; margin-right:8px; cursor:zoom-in; }
+  .pend-th img{ width:100%; height:100%; object-fit:cover; opacity:0; transition:opacity .25s; display:block; }
+  .pend-th img.on{ opacity:1; }
   .cat-hf-list{ display:flex; flex-wrap:wrap; gap:6px; margin:6px 0 8px; }
   .cat-hf-chip{ background:#F7E4DA; color:var(--rust); border-radius:14px; padding:4px 6px 4px 10px; font-size:12.5px; font-weight:600; display:inline-flex; align-items:center; gap:6px; }
   .cat-hf-chip button{ background:none; border:none; color:var(--rust); font-size:14px; padding:0 4px; }
@@ -4237,6 +4240,25 @@ async function permanentDeleteOrder(cname){
 
 /* ---------------- PENDING ORDERS TAB ---------------- */
 
+// The catalog design a customer-catalog order line was booked from (new lines carry its id; older ones are matched by design number).
+function catItemForRow_(b){
+  if(!b || !b.fromCatalog) return null;
+  if(b.catItemId){ const c = catalog.find(x=>x.id === b.catItemId); if(c) return c; }
+  const dn = String(b.designNumber || '').trim().toLowerCase();
+  return dn ? (catalog.find(x=>String(x.name || '').trim().toLowerCase() === dn) || null) : null;
+}
+async function pendPhotoZoom(cid){
+  const it = catalog.find(c=>c.id === cid); if(!it) return;
+  const old = gid_('pendZoomOv'); if(old) old.remove();
+  const ov = document.createElement('div'); ov.className = 'modal-ov'; ov.id = 'pendZoomOv'; ov.style.zIndex = 9400; ov.style.background = 'rgba(0,0,0,.85)'; ov.style.alignItems = 'center'; ov.style.justifyContent = 'center';
+  ov.innerHTML = `<div style="text-align:center;color:#fff;max-width:96vw"><img id="pendZoomImg" style="max-width:96vw;max-height:80vh;border-radius:10px;display:none"><div style="margin-top:8px;font-weight:700">${escapeHtml(catTitle_(it))}</div><div style="margin-top:4px;opacity:.8;font-size:13px" id="pendZoomLoad">Loading photo…</div></div>`;
+  ov.onclick = ()=>ov.remove();
+  document.body.appendChild(ov);
+  const src = await catGetImg_(it, true);
+  const im = gid_('pendZoomImg'); if(!im) return;
+  if(src){ im.src = src; im.style.display = 'inline-block'; gid_('pendZoomLoad').textContent = ''; }
+  else gid_('pendZoomLoad').textContent = 'Photo not available';
+}
 function renderPendingOrders(main){
   const pendingAll = bookings.filter(b=>b.status==='pending' && !b.trashed);
 
@@ -4345,14 +4367,16 @@ function renderPendingOrders(main){
         </div>`;
       }
 
-      const lines = rows.map(b=>
-        `<div class="item-line"><span>${t('design_word')} ${escapeHtml(b.designNumber)}${b.colour?(' · '+escapeHtml(b.colour)):''} · ${escapeHtml(b.size)}${b.brand?(' · '+escapeHtml(b.brand)):''}</span>
+      const lines = rows.map(b=>{
+        const cit = catItemForRow_(b);
+        const th = cit ? `<span class="pend-th" onclick="pendPhotoZoom('${cit.id}')"><img data-cid="${cit.id}" alt=""></span>` : '';
+        return `<div class="item-line"><span style="display:inline-flex;align-items:center;">${th}<span>${t('design_word')} ${escapeHtml(b.designNumber)}${b.colour?(' · '+escapeHtml(b.colour)):''} · ${escapeHtml(b.size)}${b.brand?(' · '+escapeHtml(b.brand)):''}</span></span>
           <span style="display:inline-flex;align-items:center;gap:8px;">
             <span>${qtyUi_(b)}</span>
             <button class="chip" style="cursor:pointer;padding:3px 9px;font-size:11px;border:1px solid var(--navy);background:#fff;color:var(--navy);" onclick="this.disabled=true;this.style.opacity='0.45';this.textContent='...';dispatchOne('${b.id}')">${t('dispatch_btn')}</button>
           </span>
-        </div>`
-      ).join('');
+        </div>`;
+      }).join('');
       return `<div class="cust-card">
         <div class="cust-head"><span class="name">${escapeHtml(cname)}</span>
           <span style="display:inline-flex;align-items:center;gap:6px;">
@@ -4375,6 +4399,7 @@ function renderPendingOrders(main){
   }).join('');
 
   main.innerHTML = searchBar + `<div id="pdResults">${cards}</div>`;
+  catHydrate_(main);
 }
 
 let editNewLines_ = [];      // lines staged in the Pending-edit card, added to the order on Save
@@ -4616,7 +4641,7 @@ function onPdSearch(which, val){
   const tmp = document.createElement('div');
   renderPendingOrders(tmp);
   const fresh = tmp.querySelector('#pdResults');
-  if(fresh) live.innerHTML = fresh.innerHTML; else render();
+  if(fresh){ live.innerHTML = fresh.innerHTML; catHydrate_(live); } else render();
 }
 
 async function deletePendingOrder(cname){
@@ -5341,7 +5366,7 @@ function renderCatalog(main){
       <input id="catSearchInp" class="filter-input" placeholder="Search design / size / brand" value="${escapeHtml(catSearch)}" oninput="catShow=150;onCatSearch(this.value)">
       <button class="btn-pill" onclick="openCatShare(false)">🔗 Share Catalog Link</button>
       <button class="btn-pill alt" onclick="catPickMany()">🗂️ Add Many Photos</button>
-      ${catSel.size ? `<button class="btn-pill alt" onclick="openCatShare(true)">Share ${catSel.size} selected</button><button class="btn-pill ghost" onclick="catSel.clear();render()">Clear</button>` : ''}
+      ${catSel.size ? `<button class="btn-pill" style="background:#25D366;color:#063" onclick="catSendPhotos()">📷 Send ${catSel.size} photo${catSel.size > 1 ? 's' : ''} on WhatsApp</button><button class="btn-pill alt" onclick="openCatShare(true)">Share ${catSel.size} selected link</button><button class="btn-pill ghost" onclick="catSel.clear();render()">Clear</button>` : ''}
     </div>
     <div id="catGrid">${catGridHtml_()}</div>
     <button class="fab" onclick="openCatForm()">＋ ADD NEW DESIGN</button>`;
@@ -5763,6 +5788,61 @@ function catLink_(onlySel){
   if(onlySel && catSel.size) u += '&ids=' + [...catSel].join(',');
   return u;
 }
+/* ---------- Send the selected catalog photos directly (WhatsApp / any app), 30 at a time ---------- */
+async function catImgDataUrl_(it){
+  if(it.fileId){                                           // older photos kept in Google Drive
+    try{
+      const res = await postToSheet_({ action:'getCatalogImages', fileIds:[it.fileId] });
+      const d = await res.json();
+      if(d && d.ok && d.images && d.images[it.fileId]) return d.images[it.fileId];
+    }catch(e){}
+    return '';
+  }
+  return await catGetImg_(it, true);
+}
+function catSafeFile_(s){ return String(s || 'design').replace(/[^A-Za-z0-9\-_.]+/g, '_').slice(0, 40) || 'design'; }
+async function catSendPhotos(){
+  const items = catalog.filter(c=>catSel.has(c.id)).slice(0, 30);
+  if(!items.length) return;
+  const old = gid_('catSendOv'); if(old) old.remove();
+  const ov = document.createElement('div'); ov.className = 'modal-ov'; ov.id = 'catSendOv';
+  ov.innerHTML = `<div class="modal-sheet"><div class="voice-head"><b>📷 Send photos</b><button class="voice-x" id="cspX">✕</button></div>
+    ${catSel.size > 30 ? `<div class="msg info">WhatsApp takes up to 30 photos at a time — the first 30 are sent now, then the rest stay selected for the next send.</div>` : ''}
+    <div id="cspMsg" class="subtle fgap">Preparing photos…</div><div id="cspBtns"></div></div>`;
+  document.body.appendChild(ov);
+  gid_('cspX').onclick = ()=>ov.remove();
+  const files = [], sent = [];
+  for(let i = 0; i < items.length; i++){
+    const it = items[i], m0 = gid_('cspMsg'); if(!m0) return;      // closed meanwhile
+    m0.textContent = `Preparing photos… ${i + 1} / ${items.length}`;
+    try{
+      const src = await catImgDataUrl_(it);
+      if(src && src.indexOf('data:') === 0){
+        const blob = await (await fetch(src)).blob();
+        files.push(new File([blob], catSafeFile_(it.name) + '.jpg', { type:blob.type || 'image/jpeg' })); sent.push(it);
+      }
+    }catch(e){ console.error('photo prep failed', e); }
+  }
+  const m = gid_('cspMsg'); if(!m) return;
+  if(!files.length){ m.innerHTML = '<div class="msg err">Could not get the photos — please check internet and try again</div>'; return; }
+  const text = `*${COMPANY_NAME}*\n` + sent.map(it=>[catTitle_(it), catRate_(it) ? '₹' + catRate_(it) : ''].filter(Boolean).join(' · ')).join('\n');
+  m.innerHTML = `<div class="msg ok">${files.length} photo${files.length > 1 ? 's' : ''} ready${files.length < items.length ? ` (${items.length - files.length} could not be loaded)` : ''}</div>`;
+  gid_('cspBtns').innerHTML = `<button class="primary" id="cspSend" style="background:#25D366;color:#063">📤 Send on WhatsApp</button>
+    <button class="secondary" id="cspDl" style="margin-top:8px">⬇️ Save photos to phone</button>`;
+  gid_('cspSend').onclick = async ()=>{
+    if(!(navigator.canShare && navigator.canShare({ files }))){
+      m.innerHTML = '<div class="msg err">This browser cannot send photos directly. Use “Save photos to phone”, or share the catalog link instead.</div>'; return;
+    }
+    try{
+      await navigator.share({ files, text, title:COMPANY_NAME });
+      sent.forEach(it=>catSel.delete(it.id));
+      ov.remove(); render();
+    }catch(e){ if(!e || e.name !== 'AbortError') m.innerHTML = '<div class="msg err">Could not open the share sheet — please try again</div>'; }
+  };
+  gid_('cspDl').onclick = ()=>{
+    files.forEach((f, i)=>setTimeout(()=>{ const a = document.createElement('a'); a.href = URL.createObjectURL(f); a.download = f.name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href), 20000); }, i * 400));
+  };
+}
 function openCatShare(onlySel){
   const old = gid_('catShareOv'); if(old) old.remove();
   const url = catLink_(onlySel);
@@ -5814,7 +5894,7 @@ async function importCatalogOrders_(){
         brand:String(l.brand || 'Catalog Order'), designNumber:String(l.design), colour:l.colour || '',
         size:String(l.size), qty:Number(l.qty) || 1, unit:UNIT_EN[l.unit] ? l.unit : 'set',
         pricePerPcs:l.rate ? String(l.rate) : '', status:'pending', orderedAt:o.createdAt, dispatchedAt:null,
-        orderedBy:{ name:'Catalog (Customer)', mobile:'' }, fromCatalog:true, custPhone:o.phone || '', note:o.note || ''
+        orderedBy:{ name:'Catalog (Customer)', mobile:'' }, fromCatalog:true, catItemId:l.itemId || '', custPhone:o.phone || '', note:o.note || ''
       };
       bookings.push(row); lineIds.add(id); added.push(row);
       if(seenBookingIds_) seenBookingIds_.add(id);
