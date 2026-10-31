@@ -232,7 +232,10 @@
     display:flex; flex-direction:column; align-items:center; gap:2px;
   }
   .navbtn.active{ color:#fff; background:rgba(255,255,255,.14); }
-  .navbtn .ic{ font-size:16px; }
+  .navbtn .ic{ font-size:16px; position:relative; }
+  .navbadge{ display:none; position:absolute; top:-7px; right:-12px; min-width:17px; height:17px; padding:0 4px; border-radius:9px; background:#E53935; color:#fff; font-size:10.5px; font-weight:700; font-style:normal; line-height:17px; text-align:center; box-shadow:0 0 0 2px var(--navy); }
+  @media(min-width:900px){ .navbadge{ box-shadow:0 0 0 2px var(--side2); right:-8px; } }
+  body:not(.public) .pub-head{ position:static; }
 
   .set-pill{
     display:inline-block; font-size:12.5px; font-weight:700;
@@ -581,10 +584,14 @@
   <button class="navbtn" data-tab="catalog"><span class="ic">🖼️</span>Catalog</button>
   <button class="navbtn" data-tab="dispatchedOrders"><span class="ic">📦</span>Dispatched</button>
   <button class="navbtn" data-tab="pendingOrders"><span class="ic">⏳</span>Pending</button>
+  <button class="navbtn" data-tab="catPending"><span class="ic">🛍️<i class="navbadge" id="catPendBadge"></i></span>Cat. Pending</button>
+  <button class="navbtn" data-tab="catDispatched"><span class="ic">🚚</span>Cat. Dispatched</button>
   <button class="navbtn" data-tab="customers"><span class="ic">👤</span>Customers</button>
   <button class="navbtn" data-tab="deletedOrders"><span class="ic">🗑️</span>Deleted</button>
   <button class="navbtn" data-tab="activity"><span class="ic">📋</span>Activity</button>
   <button class="navbtn" data-tab="approvals" id="approvalsNavBtn" style="display:none;"><span class="ic">✅</span>Approvals</button>
+  <button class="navbtn" data-tab="custCatalog" style="display:none;"><span class="ic">🖼️</span>Catalog</button>
+  <button class="navbtn" data-tab="custOrders" style="display:none;"><span class="ic">📄</span>Saved Orders</button>
   <div class="side-foot">Version 2.0</div>
 </div>
 
@@ -700,13 +707,17 @@ function canCurrentUserDelete(){
   return !!(entry && entry.canDelete);
 }
 
-// Tabs a staff member does NOT see by default — the owner must explicitly
-// switch each one on from the Approvals screen. Order (book) and Article
-// (dispatch) are always visible to any approved staff, since they need
-// those two to take orders day-to-day.
+// Nothing is visible to a newly approved person by default — the owner switches
+// on each tab (Order, Article, Dashboard ... Cat. Pending) from the Approvals
+// screen. A person approved as "Customer" never sees these; they only get
+// the customer Catalog + Saved Orders.
 const RESTRICTABLE_TABS = [
+  { key:'book',             label:'Order' },
+  { key:'dispatch',         label:'Article' },
   { key:'dashboard',        label:'Dashboard' },
   { key:'catalog',          label:'Catalog' },
+  { key:'catPending',       label:'Cat. Pending' },
+  { key:'catDispatched',    label:'Cat. Dispatched' },
   { key:'dispatchedOrders', label:'Dispatched' },
   { key:'pendingOrders',    label:'Pending' },
   { key:'customers',        label:'Customers' },
@@ -714,15 +725,30 @@ const RESTRICTABLE_TABS = [
   { key:'activity',         label:'Activity' }
 ];
 
+function isOwnerUser_(){ return !!(currentStaff && currentStaff.mobile && currentStaff.mobile.toLowerCase() === OWNER_EMAIL.toLowerCase()); }
+function approvalEntry_(){ return (currentStaff && currentStaff.mobile) ? (staffApprovals.find(s=>s.email === currentStaff.mobile) || null) : null; }
+// true when the owner approved this Google account as a CUSTOMER (sees only Catalog + Saved Orders)
+function isCustomerUser_(){
+  if(!currentStaff || !currentStaff.mobile || isOwnerUser_()) return false;
+  const e = approvalEntry_();
+  return !!(e && e.status === 'approved' && e.role === 'customer');
+}
+
 function canAccessTab(tabKey){
   if(!currentStaff) return false;
-  if(tabKey === 'book' || tabKey === 'dispatch') return true; // always allowed
+  if(isCustomerUser_()) return tabKey === 'custCatalog' || tabKey === 'custOrders';
+  if(tabKey === 'custCatalog' || tabKey === 'custOrders') return false;
   if(!currentStaff.mobile) return true; // legacy name-only login predates this system
-  if(currentStaff.mobile.toLowerCase() === OWNER_EMAIL.toLowerCase()) return true;
+  if(isOwnerUser_()) return true;
   if(tabKey === 'approvals') return false; // owner-only, handled separately
-  const entry = staffApprovals.find(s=>s.email === currentStaff.mobile);
-  return !!(entry && Array.isArray(entry.allowedTabs) && entry.allowedTabs.includes(tabKey));
+  const entry = approvalEntry_();
+  return !!(entry && entry.status === 'approved' && Array.isArray(entry.allowedTabs) && entry.allowedTabs.includes(tabKey));
 }
+function firstAllowedTab_(){
+  const order = ['custCatalog','custOrders','book','dispatch','dashboard','catalog','dispatchedOrders','pendingOrders','catPending','catDispatched','customers','deletedOrders','activity','approvals'];
+  return order.find(canAccessTab) || 'none';
+}
+function goTab_(tab){ currentTab = tab; render(); }
 
 async function toggleTabPermission(email, tabKey){
   const s = staffApprovals.find(x=>x.email===email);
@@ -767,7 +793,7 @@ const I18N = {
   en: {
     app_title:'Subhash Sales Agencies',
     nav_order:'Order', nav_article:'Article', nav_dispatched:'Dispatched', nav_pending:'Pending',
-    nav_customers:'Customers', nav_deleted:'Deleted', nav_activity:'Activity', nav_approvals:'Approvals', nav_dashboard:'Dashboard', nav_catalog:'Catalog',
+    nav_customers:'Customers', nav_deleted:'Deleted', nav_activity:'Activity', nav_approvals:'Approvals', nav_dashboard:'Dashboard', nav_catalog:'Catalog', nav_catpend:'Cat. Pending', nav_catdisp:'Cat. Dispatched', nav_custorders:'Saved Orders',
     pending_sets:'Pending', sets:'Sets', set:'Set', pcs:'Pcs', box:'Box', switch_btn:'Switch',
 
     login_title:'Staff Login',
@@ -867,7 +893,7 @@ const I18N = {
   hi: {
     app_title:'सुभाष सेल्स एजेंसीज',
     nav_order:'ऑर्डर', nav_article:'आर्टिकल', nav_dispatched:'डिस्पैच', nav_pending:'पेंडिंग',
-    nav_customers:'ग्राहक', nav_deleted:'डिलीटेड', nav_activity:'एक्टिविटी', nav_approvals:'अप्रूवल्स', nav_dashboard:'डैशबोर्ड', nav_catalog:'कैटलॉग',
+    nav_customers:'ग्राहक', nav_deleted:'डिलीटेड', nav_activity:'एक्टिविटी', nav_approvals:'अप्रूवल्स', nav_dashboard:'डैशबोर्ड', nav_catalog:'कैटलॉग', nav_catpend:'कैट. पेंडिंग', nav_catdisp:'कैट. डिस्पैच', nav_custorders:'सेव ऑर्डर',
     pending_sets:'पेंडिंग', sets:'सेट', set:'सेट', pcs:'पीस', box:'बॉक्स', switch_btn:'स्विच',
 
     login_title:'स्टाफ लॉगिन',
@@ -987,7 +1013,7 @@ function applyStaticLanguage(){
   if(langBtn) langBtn.textContent = t('lang_toggle');
   const navMap = { book:'nav_order', dispatch:'nav_article', dispatchedOrders:'nav_dispatched',
     pendingOrders:'nav_pending', customers:'nav_customers', deletedOrders:'nav_deleted',
-    activity:'nav_activity', approvals:'nav_approvals', dashboard:'nav_dashboard', catalog:'nav_catalog' };
+    activity:'nav_activity', approvals:'nav_approvals', dashboard:'nav_dashboard', catalog:'nav_catalog', catPending:'nav_catpend', catDispatched:'nav_catdisp', custCatalog:'nav_catalog', custOrders:'nav_custorders' };
   document.querySelectorAll('.navbtn').forEach(btn=>{
     const key = navMap[btn.dataset.tab];
     if(!key) return;
@@ -1374,23 +1400,61 @@ function showShareAgainPrompt_(file, blob, filename, shareTitle, shareText){
   };
 }
 
+// ---- Secure server access: every request carries this device's private session token.
+// The Apps Script checks WHO you are and WHAT you may do on its side (nothing is open any more). ----
+let waitingSession_ = null;   // {token,email,name,status} while a new sign-in waits for the owner's approval
+let loginNotice_ = '';
+let authFailing_ = false;
+function authToken_(){
+  try{
+    if(currentStaff && currentStaff.token) return currentStaff.token;
+    const d = (typeof pubDev_ === 'function') ? pubDev_() : null;
+    return d && d.token ? d.token : '';
+  }catch(e){ return ''; }
+}
+async function apiJson_(obj){
+  try{
+    const r = await postToSheet_(obj);
+    const j = await r.json();
+    if(j && j.code === 'auth') onAuthFail_();
+    return j;
+  }catch(e){ return null; }
+}
+function onAuthFail_(){
+  if(authFailing_) return;
+  authFailing_ = true; setTimeout(()=>{ authFailing_ = false; }, 3000);
+  if(PUBLIC_MODE){
+    try{ if(pubDev_()){ pubSignOut_(); const m = gid_('gMsg'); if(m) m.innerHTML = '<div class="msg info">Please sign in again.</div>'; } }catch(e){}
+    return;
+  }
+  if(currentStaff) forceLogout_('Your sign-in has ended. Please sign in again.');
+}
+function forceLogout_(msg){
+  loginNotice_ = msg || '';
+  currentStaff = null; waitingSession_ = null; loginWaitingEmail = null;
+  try{ localStorage.removeItem('ssa_currentStaff'); }catch(e){}
+  render();
+}
+// a write is "finished" when the server accepted it, or refused it for good (retrying would never help)
+function pushDone_(j){
+  if(j && j.ok) return true;
+  if(j && (j.code === 'forbidden' || j.code === 'too_large' || j.code === 'bad_request')){ console.error('Server refused this save:', j.code, j.error); return true; }
+  return false;
+}
+
 async function storageGet(key){
-  if(cloudAvailable && navigator.onLine){
-    try{
-      const res = await fetch(`${SHEET_SCRIPT_URL}?key=${encodeURIComponent(key)}`);
-      const data = await res.json();
-      if(data && data.value !== null && data.value !== undefined){
-        // Cache every successful online read locally too — not just what
-        // this device itself saves. Otherwise a staff member who only ever
-        // READS staffApprovals (never writes it) has nothing cached for
-        // when they go offline, and the app falls back to showing no
-        // approved tabs at all even though the owner granted them access.
+  if(cloudAvailable && navigator.onLine && authToken_()){
+    const data = await apiJson_({ action:'get', key });
+    if(data && data.ok){
+      if(data.value !== null && data.value !== undefined){
+        // Cache every successful online read locally too, so the app also works offline.
         // Don't overwrite this device's own not-yet-uploaded changes with older cloud data.
         if(!isKeyBusy_(key)){ try{ localStorage.setItem('ssa_'+key, data.value); }catch(e){} }
         return data.value;
       }
       return null;
-    }catch(e){ console.error('Sheet fetch failed, using local backup', e); }
+    }
+    // not allowed / server busy / no network: fall back to this device's saved copy
   }
   try{ return localStorage.getItem('ssa_'+key); }
   catch(e){ return null; }
@@ -1403,7 +1467,7 @@ async function storageSet(key, value){
   try{ localStorage.setItem('ssa_'+key, value); }
   catch(e){ console.error('local storage failed', e); }
 
-  if(cloudAvailable && navigator.onLine){ pushKeyInBackground_(key); return; }
+  if(cloudAvailable && navigator.onLine && authToken_()){ pushKeyInBackground_(key); return; }
   markKeyDirty_(key);
 }
 
@@ -1415,12 +1479,8 @@ function pushKeyInBackground_(key){
     try{
       const value = localStorage.getItem('ssa_'+key);
       if(value === null){ markKeySynced_(key); return; }
-      await fetch(SHEET_SCRIPT_URL, {
-        method:'POST',
-        headers: {'Content-Type':'text/plain;charset=utf-8'},
-        body: JSON.stringify({ key, value })
-      });
-      if(!pushQueued_.has(key)) markKeySynced_(key);
+      const j = await apiJson_({ key, value });
+      if(pushDone_(j) && !pushQueued_.has(key)) markKeySynced_(key);
     }catch(e){
       console.error('Sheet save failed, will retry when back online', e);  // key stays dirty -> retried automatically
     }finally{
@@ -1452,7 +1512,7 @@ function markKeySynced_(key){
 
 let isFlushing_ = false;
 async function flushDirtyKeys_(){
-  if(isFlushing_ || !cloudAvailable || !navigator.onLine || !dirtyKeys.length) return;
+  if(isFlushing_ || !cloudAvailable || !navigator.onLine || !dirtyKeys.length || !authToken_()) return;
   isFlushing_ = true;
   try{
     for(const key of [...dirtyKeys]){
@@ -1460,12 +1520,8 @@ async function flushDirtyKeys_(){
       try{
         const value = localStorage.getItem('ssa_'+key);
         if(value === null){ markKeySynced_(key); continue; }
-        await fetch(SHEET_SCRIPT_URL, {
-          method:'POST',
-          headers: {'Content-Type':'text/plain;charset=utf-8'},
-          body: JSON.stringify({ key, value })
-        });
-        markKeySynced_(key);
+        const j = await apiJson_({ key, value });
+        if(pushDone_(j)) markKeySynced_(key);
       }catch(e){ console.error('Retry sync failed for', key, e); }
     }
   } finally { isFlushing_ = false; }
@@ -1512,8 +1568,9 @@ async function fetchCloudState_(){
   // all three requests go out together (not one after another)
   // catalog list is read now and then (not every 20s) to keep Google Sheets traffic low; the customer-orders inbox is read every time
   cloudTick_++;
-  const wantCat = cloudTick_ === 1 || cloudTick_ % 5 === 0 || currentTab === 'catalog' || currentTab === 'dashboard';
-  const r = await Promise.all([ storageGet('bookings'), storageGet('activityLog'), storageGet('staffApprovals'), storageGet('catalogInbox'), wantCat ? catLoadAll_().catch(()=>null) : Promise.resolve(undefined) ]);
+  const wantCat = cloudTick_ === 1 || cloudTick_ % 5 === 0 || currentTab === 'catalog' || currentTab === 'dashboard' || currentTab === 'custCatalog' || currentTab === 'custOrders' || currentTab === 'catPending' || currentTab === 'catDispatched';
+  const cu_ = isCustomerUser_();   // customers never download bookings / activity of the business
+  const r = await Promise.all([ cu_ ? undefined : storageGet('bookings'), cu_ ? undefined : storageGet('activityLog'), storageGet('staffApprovals'), (catApiName_() ? apiJson_({ action:catApiName_() }) : undefined), wantCat ? catLoadAll_().catch(()=>null) : Promise.resolve(undefined) ]);
   return { b:r[0], a:r[1], s:r[2], i:r[3], c:r[4] };
 }
 // A key is "busy" while this device still has changes on their way to the cloud;
@@ -1523,14 +1580,14 @@ function isKeyBusy_(key){ return dirtyKeys.includes(key) || pushInFlight_.has(ke
 function applyCloudState_(st){
   let changed = false;
   lastSyncAt_ = new Date();
-  try{ if(st.i !== undefined) catalogInbox = st.i ? (JSON.parse(st.i) || []) : []; }catch(e){ console.error('inbox parse', e); }
+  try{ if(st.i && st.i.ok) applyCatOrders_(st.i); }catch(e){ console.error('orders apply', e); }
   try{
     if(st.c && !catBusy_() && st.c.sig !== lastCloudRaw_.c){
       catalog = st.c.list; catPagesSaved_ = st.c.pages; lastCloudRaw_.c = st.c.sig; changed = true;
     }
   }catch(e){ console.error('catalog parse', e); }
   try{
-    if(!isKeyBusy_('bookings') && st.b !== lastCloudRaw_.b){
+    if(st.b !== undefined && !isKeyBusy_('bookings') && st.b !== lastCloudRaw_.b){
       const nb = st.b ? JSON.parse(st.b) : [];
       normalizeBookingFields_(nb);
       detectNewOrders_(nb);
@@ -1538,7 +1595,7 @@ function applyCloudState_(st){
     }
   }catch(e){ console.error('bookings parse', e); }
   try{
-    if(!isKeyBusy_('activityLog') && st.a !== lastCloudRaw_.a){
+    if(st.a !== undefined && !isKeyBusy_('activityLog') && st.a !== lastCloudRaw_.a){
       activityLog = st.a ? JSON.parse(st.a) : []; lastCloudRaw_.a = st.a; changed = true;
     }
   }catch(e){ console.error('activity parse', e); }
@@ -1563,6 +1620,11 @@ async function loadData(){
     const saved = localStorage.getItem('ssa_currentStaff');
     if(saved) currentStaff = JSON.parse(saved);
   }catch(e){}
+  if(currentStaff && !currentStaff.token){   // an old sign-in from before secure login: sign in once more
+    currentStaff = null; try{ localStorage.removeItem('ssa_currentStaff'); }catch(e){}
+    loginNotice_ = 'The app now uses secure sign-in. Please sign in once more.';
+  }
+  if(!currentStaff){ loaded = true; render(); startAutoRefresh_(); return; }
 
   // 1) Show the app INSTANTLY from this device's saved copy (no waiting for the internet).
   let cached = false;
@@ -1577,6 +1639,7 @@ async function loadData(){
       cached = true;
     }
   }catch(e){ bookings = []; activityLog = []; staffApprovals = []; cached = false; }
+  if(!staffApprovals.length){ try{ const ls_ = localStorage.getItem('ssa_staffApprovals'); if(ls_) staffApprovals = JSON.parse(ls_) || []; }catch(e){} }
   if(cached){ loaded = true; render(); updateSyncBadge_(); }
 
   // 2) Then quietly bring in the latest from Google Sheets.
@@ -1584,10 +1647,11 @@ async function loadData(){
   try{
     const st = await fetchCloudState_();
     changed = applyCloudState_(st);
+    if(await fetchCatExtra_(st)) changed = true;
     if(await importCatalogOrders_()) changed = true;
   }catch(e){ console.error('Initial cloud load failed', e); }
 
-  await purgeOldRecords();
+  if(!isCustomerUser_()) await purgeOldRecords();
   loaded = true;
   if(!cached) render();
   else if(changed) rerenderAfterData_();
@@ -1643,6 +1707,7 @@ async function silentRefresh_(){
   try{
     const st = await fetchCloudState_();
     let changed = applyCloudState_(st);
+    if(await fetchCatExtra_(st)) changed = true;
     if(await importCatalogOrders_()) changed = true;
     if(!changed){ renderTopbarRight(); return; }   // nothing new: no redraw, no flicker
     rerenderAfterData_();
@@ -1865,7 +1930,7 @@ function loadFirebaseSdk_(){
   return fbSdkPromise_;
 }
 function postToSheet_(obj){
-  return fetch(SHEET_SCRIPT_URL, { method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body: JSON.stringify(obj) });
+  return fetch(SHEET_SCRIPT_URL, { method:'POST', headers:{'Content-Type':'text/plain;charset=utf-8'}, body: JSON.stringify(Object.assign({ token: authToken_() }, obj)) });
 }
 
 async function registerPush_(){
@@ -1974,6 +2039,10 @@ function openShareApp(){
 function renderTopbarRight(){
   const el = document.getElementById('topbarRight');
   if(!currentStaff){ el.innerHTML = ''; return; }
+  if(isCustomerUser_()){
+    el.innerHTML = `<span id="syncBadge" class="sync-badge"></span><span class="staff-badge">👤 ${escapeHtml(currentStaff.name)} <button onclick="logoutStaff()">${t('switch_btn')}</button></span>`;
+    updateSyncBadge_(); return;
+  }
   const pendingRows_ = bookings.filter(b=>b.status==='pending' && !b.trashed);
   el.innerHTML = `
     <span id="syncBadge" class="sync-badge"></span>
@@ -2010,7 +2079,6 @@ function render(){
   const isOwner = currentStaff.mobile && currentStaff.mobile.toLowerCase() === OWNER_EMAIL.toLowerCase();
   const approvalsBtn = document.getElementById('approvalsNavBtn');
   if(approvalsBtn) approvalsBtn.style.display = isOwner ? 'flex' : 'none';
-  if(currentTab === 'approvals' && !isOwner) currentTab = 'book';
 
   // Restrict tabs per-staff: owner sees everything; a staff member only
   // sees Order + Article by default, plus whatever tabs the owner has
@@ -2020,17 +2088,25 @@ function render(){
     if(tab === 'approvals') return; // handled above
     btn.style.display = canAccessTab(tab) ? 'flex' : 'none';
   });
-  if(!canAccessTab(currentTab)) currentTab = 'book';
+  if(!canAccessTab(currentTab)) currentTab = firstAllowedTab_();
+  const custMode_ = isCustomerUser_();
+  ['shareAppBtn','notifyToggleBtn'].forEach(id=>{ const e = document.getElementById(id); if(e) e.style.display = custMode_ ? 'none' : ''; });
+  updateCatBadge_();
 
   renderTopbarRight();
   updateDatalists();
-  if(!pushTried_){ pushTried_ = true; registerPush_(); }
+  if(!pushTried_ && !isCustomerUser_()){ pushTried_ = true; registerPush_(); }
   document.body.classList.remove('nologin');
-  main.className = (currentTab==='dashboard' || currentTab==='catalog') ? 'wide' : '';
+  main.className = (currentTab==='dashboard' || currentTab==='catalog' || currentTab==='custCatalog') ? 'wide' : '';
   document.querySelectorAll('.navbtn').forEach(b=>b.classList.toggle('active', b.dataset.tab===currentTab));
   const actBtn = document.querySelector('.navbtn.active'), pt = document.getElementById('pageTitle');
   if(pt) pt.textContent = actBtn && actBtn.lastChild ? actBtn.lastChild.textContent.trim() : '';
-  if(currentTab==='dashboard') renderDashboard(main);
+  if(currentTab==='none') renderNoAccess_(main);
+  else if(currentTab==='custCatalog') renderCustCatalog(main);
+  else if(currentTab==='custOrders') renderCustOrders(main);
+  else if(currentTab==='catPending') renderCatPending(main);
+  else if(currentTab==='catDispatched') renderCatDispatched(main);
+  else if(currentTab==='dashboard') renderDashboard(main);
   else if(currentTab==='catalog') renderCatalog(main);
   else if(currentTab==='book') renderBook(main);
   else if(currentTab==='dispatch') renderDispatch(main);
@@ -2053,7 +2129,7 @@ function renderLogin(main){
         <h2>${t('login_title')}</h2>
         <p>${googleReady ? t('login_sub_google') : t('login_sub_manual')}</p>
         ${!cloudAvailable ? `<div class="msg err">${t('login_cloud_warning')}</div>` : ''}
-        <div id="loginMsg"></div>
+        <div id="loginMsg">${loginNotice_ ? `<div class="msg info">${escapeHtml(loginNotice_)}</div>` : ''}</div>
         <label>${t('your_name')}</label>
         <input id="loginName" placeholder="${t('name_ph')}">
         ${googleReady
@@ -2062,13 +2138,13 @@ function renderLogin(main){
       </div>
     </div>
   `;
+  loginNotice_ = '';
   if(googleReady) setTimeout(initGoogleButton, 0);
   else setTimeout(()=>{ const el = document.getElementById('loginName'); if(el) el.focus(); }, 0);
 }
 
 function renderLoginWaiting(main){
-  const entry = staffApprovals.find(s=>s.email===loginWaitingEmail);
-  const status = entry ? entry.status : 'pending';
+  const status = (waitingSession_ && waitingSession_.status) || 'pending';
   main.innerHTML = `
     <div class="login-wrap">
       <div class="login-card">
@@ -2083,21 +2159,39 @@ function renderLoginWaiting(main){
   `;
 }
 
+// Forget the locally stored business data (used when a different person signs in / on sign-out)
+function clearLocalData_(){
+  if(dirtyKeys.length) return;   // never throw away changes that have not reached the server yet
+  ['bookings','activityLog','staffApprovals','catalogInbox','catalogImported'].forEach(k=>{ try{ localStorage.removeItem('ssa_'+k); }catch(e){} });
+  lastCloudRaw_ = { b:null, a:null, s:null, c:null };
+  seenBookingIds_ = null; seenCatIds_ = null; lastInboxSig_ = null;
+}
+
+function finishLogin_(sess){
+  let prev = ''; try{ prev = localStorage.getItem('ssa_last_email') || ''; }catch(e){}
+  if(prev && prev.toLowerCase() !== String(sess.email).toLowerCase()) clearLocalData_();
+  currentStaff = { name: sess.name, mobile: sess.email, token: sess.token };
+  try{ localStorage.setItem('ssa_currentStaff', JSON.stringify(currentStaff)); localStorage.setItem('ssa_last_email', sess.email); }catch(e){}
+  loginWaitingEmail = null; waitingSession_ = null;
+  currentTab = ''; loaded = false;
+  staffApprovals = []; bookings = []; activityLog = []; catalogInbox = []; catAccepted = [];
+  render();
+  loadData();
+}
+
 async function recheckApprovalStatus(){
-  try{
-    const v = await storageGet('staffApprovals');
-    if(v) staffApprovals = JSON.parse(v);
-  }catch(e){}
-  const entry = staffApprovals.find(s=>s.email===loginWaitingEmail);
-  if(entry && entry.status==='approved'){
-    currentStaff = { name: entry.name, mobile: entry.email };
-    try{ localStorage.setItem('ssa_currentStaff', JSON.stringify(currentStaff)); }catch(e){}
-    loginWaitingEmail = null;
-  }
+  if(!waitingSession_){ cancelLoginWait(); return; }
+  const w = waitingSession_;
+  const r = await apiJson_({ action:'whoami', token:w.token });
+  if(!r){ alert('Could not reach the server. Please check your internet.'); return; }
+  if(!r.ok){ waitingSession_ = null; loginWaitingEmail = null; loginNotice_ = 'Please sign in again.'; render(); return; }
+  if(r.status === 'approved'){ finishLogin_({ token:w.token, email:w.email, name:r.name || w.name }); return; }
+  w.status = r.status === 'rejected' ? 'rejected' : 'pending';
   render();
 }
 
 function cancelLoginWait(){
+  waitingSession_ = null;
   loginWaitingEmail = null;
   render();
 }
@@ -2122,53 +2216,40 @@ function parseJwt(token){
 async function handleGoogleCredential(response){
   const payload = parseJwt(response.credential);
   if(!payload || !payload.email) return;
-  const email = payload.email;
   const nameEl = document.getElementById('loginName');
   const typedName = nameEl ? nameEl.value.trim() : '';
-  const name = typedName || payload.name || email;
-
-  // The owner's own Google account always gets straight in, and unlocks the
-  // Approvals tab for approving/rejecting everyone else.
-  if(email.toLowerCase() === OWNER_EMAIL.toLowerCase()){
-    currentStaff = { name, mobile: email };
-    try{ localStorage.setItem('ssa_currentStaff', JSON.stringify(currentStaff)); }catch(e){}
-    loginWaitingEmail = null;
-    render();
+  const msg = document.getElementById('loginMsg');
+  if(msg) msg.innerHTML = `<div class="msg info">${t('processing_word')}</div>`;
+  // The server checks the Google sign-in itself, records new people as "pending", and
+  // hands back a private session token. Nothing about access is decided on this device.
+  const r = await apiJson_({ action:'login', idToken: response.credential, name: typedName });
+  if(!r || !r.ok){
+    const m2 = document.getElementById('loginMsg');
+    if(m2) m2.innerHTML = `<div class="msg err">${escapeHtml((r && r.error) || 'Could not sign in — please check your internet and try again.')}</div>`;
     return;
   }
-
-  const existing = staffApprovals.find(s=>s.email===email);
-  if(existing && existing.status === 'approved'){
-    currentStaff = { name: existing.name, mobile: email };
-    try{ localStorage.setItem('ssa_currentStaff', JSON.stringify(currentStaff)); }catch(e){}
-    loginWaitingEmail = null;
-    render();
-    return;
-  }
-
-  if(!existing){
-    staffApprovals.push({ name, email, status:'pending', requestedAt: new Date().toISOString() });
-    await saveApprovals();
-    notifyOwnerOfRequest(name, email); // fire-and-forget; owner gets an email
-  }
-  loginWaitingEmail = email;
+  if(r.status === 'approved'){ finishLogin_({ token:r.token, email:r.email, name:r.name }); return; }
+  waitingSession_ = { token:r.token, email:r.email, name:r.name, status: r.status === 'rejected' ? 'rejected' : 'pending' };
+  loginWaitingEmail = r.email;
   render();
 }
 
 function loginStaffManual(){
-  const name = document.getElementById('loginName').value.trim();
   const msg = document.getElementById('loginMsg');
-  if(!name){ msg.innerHTML = `<div class="msg err">${t('enter_name_err')}</div>`; return; }
-  currentStaff = { name, mobile: '' };
-  try{ localStorage.setItem('ssa_currentStaff', JSON.stringify(currentStaff)); }catch(e){}
-  render();
+  if(msg) msg.innerHTML = '<div class="msg err">Google sign-in is required.</div>';
 }
 
-function logoutStaff(){
+async function logoutStaff(){
+  if(dirtyKeys.length && navigator.onLine){ try{ await flushDirtyKeys_(); }catch(e){} }   // send any unsent changes first
+  const tk_ = authToken_();
+  if(tk_ && navigator.onLine){ try{ postToSheet_({ action:'logout', token:tk_ }).catch(()=>{}); }catch(e){} }   // end the session on the server too
+  if(isCustomerUser_()){ pubCart = []; custInit_ = false; try{ localStorage.removeItem('ssa_pub_cart'); }catch(e){} }
   unregisterPush_();   // this device stops getting order alerts once logged out
   pushTried_ = false;
   currentStaff = null;
-  loginWaitingEmail = null;
+  loginWaitingEmail = null; waitingSession_ = null;
+  bookings = []; activityLog = []; staffApprovals = []; catalogInbox = []; catAccepted = [];
+  clearLocalData_();   // the next person on this device must not find this person's data
   try{ localStorage.removeItem('ssa_currentStaff'); }catch(e){}
   if(googleReady && window.google && google.accounts && google.accounts.id){
     try{ google.accounts.id.disableAutoSelect(); }catch(e){}
@@ -2182,6 +2263,13 @@ function logoutStaff(){
 
 /* ---------------- STAFF APPROVALS TAB (owner only) ---------------- */
 
+function jq_(v){ return String(v).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
+function approveButtons_(email, again){
+  const e = jq_(email);
+  return `<button class="action-btn wa" onclick="approveStaff('${e}','staff')">✅ ${again ? t('approve_anyway') : 'Approve as Staff'}</button>
+        <button class="action-btn wa" onclick="approveStaff('${e}','customer')">🛍️ Approve as Customer</button>`;
+}
+
 function renderApprovals(main){
   const pending = staffApprovals.filter(s=>s.status==='pending').sort((a,b)=>new Date(b.requestedAt)-new Date(a.requestedAt));
   const approved = staffApprovals.filter(s=>s.status==='approved');
@@ -2192,32 +2280,46 @@ function renderApprovals(main){
       <div class="cust-head"><span class="name">${escapeHtml(s.name)}</span><span class="set-pill pending">${t('badge_pending')}</span></div>
       <div style="font-size:13px;color:#5b6472;">${escapeHtml(s.email)} · ${t('requested')} ${fmtTime(s.requestedAt)}</div>
       <div class="action-row">
-        <button class="action-btn wa" onclick="approveStaff('${s.email.replace(/'/g,"\\'")}')">${t('approve')}</button>
-        <button class="action-btn del" onclick="rejectStaff('${s.email.replace(/'/g,"\\'")}')">${t('reject')}</button>
+        ${approveButtons_(s.email, false)}
+        <button class="action-btn del" onclick="rejectStaff('${jq_(s.email)}')">${t('reject')}</button>
       </div>
     </div>
   `).join('') : `<div class="empty">${t('no_pending_requests')}</div>`;
 
   const approvedHtml = approved.length ? approved.map(s=>{
+    const e = jq_(s.email);
+    if(s.role === 'customer'){
+      return `
+    <div class="cust-card">
+      <div class="cust-head"><span class="name">${escapeHtml(s.name)}</span><span class="set-pill done">🛍️ Customer</span></div>
+      <div style="font-size:13px;color:#5b6472;">${escapeHtml(s.email)}</div>
+      <div style="font-size:12px;color:#5b6472;margin-top:6px;">Sees only: Catalog + Saved Orders</div>
+      <div class="action-row" style="margin-top:10px;">
+        <button class="action-btn wa" onclick="setStaffRole('${e}','staff')">Make Staff</button>
+        <button class="action-btn del" onclick="revokeStaff('${e}')">${t('revoke_access')}</button>
+      </div>
+    </div>`;
+    }
     const allowedTabs = Array.isArray(s.allowedTabs) ? s.allowedTabs : [];
     const tabToggles = RESTRICTABLE_TABS.map(rt=>{
       const on = allowedTabs.includes(rt.key);
-      return `<button class="chip" style="cursor:pointer;border:1px solid ${on ? 'var(--navy)' : '#ccc'};background:${on ? 'var(--navy)' : '#fff'};color:${on ? '#fff' : '#555'};" onclick="toggleTabPermission('${s.email.replace(/'/g,"\\'")}','${rt.key}')">${on ? '✓ ' : ''}${rt.label}</button>`;
+      return `<button class="chip" style="cursor:pointer;border:1px solid ${on ? 'var(--navy)' : '#ccc'};background:${on ? 'var(--navy)' : '#fff'};color:${on ? '#fff' : '#555'};" onclick="toggleTabPermission('${e}','${rt.key}')">${on ? '✓ ' : ''}${rt.label}</button>`;
     }).join(' ');
     return `
     <div class="cust-card">
-      <div class="cust-head"><span class="name">${escapeHtml(s.name)}</span><span class="set-pill done">${t('badge_approved')}</span></div>
+      <div class="cust-head"><span class="name">${escapeHtml(s.name)}</span><span class="set-pill done">${t('badge_approved')} · Staff</span></div>
       <div style="font-size:13px;color:#5b6472;">${escapeHtml(s.email)}</div>
       <div style="margin-top:6px;">
         <span class="set-pill ${s.canDelete ? 'done' : 'pending'}">${s.canDelete ? t('delete_allowed') : t('delete_blocked')}</span>
         <span class="set-pill ${s.canSeeLocation ? 'done' : 'pending'}">📍 ${s.canSeeLocation ? t('loc_allowed') : t('loc_blocked')}</span>
       </div>
-      <div style="font-size:12px;color:#5b6472;margin-top:10px;margin-bottom:4px;">Tabs this staff can see (Order + Article always visible):</div>
+      <div style="font-size:12px;color:#5b6472;margin-top:10px;margin-bottom:4px;">Tabs this person can see (nothing is visible until you switch it on):</div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;">${tabToggles}</div>
       <div class="action-row" style="margin-top:10px;">
-        <button class="action-btn ${s.canDelete ? 'del' : 'wa'}" onclick="toggleDeletePermission('${s.email.replace(/'/g,"\\'")}')">${s.canDelete ? t('block_delete') : t('allow_delete')}</button>
-        <button class="action-btn ${s.canSeeLocation ? 'del' : 'wa'}" onclick="toggleLocPermission('${s.email.replace(/'/g,"\\'")}')">📍 ${s.canSeeLocation ? t('block_loc') : t('allow_loc')}</button>
-        <button class="action-btn del" onclick="revokeStaff('${s.email.replace(/'/g,"\\'")}')">${t('revoke_access')}</button>
+        <button class="action-btn ${s.canDelete ? 'del' : 'wa'}" onclick="toggleDeletePermission('${e}')">${s.canDelete ? t('block_delete') : t('allow_delete')}</button>
+        <button class="action-btn ${s.canSeeLocation ? 'del' : 'wa'}" onclick="toggleLocPermission('${e}')">📍 ${s.canSeeLocation ? t('block_loc') : t('allow_loc')}</button>
+        <button class="action-btn" onclick="setStaffRole('${e}','customer')">Make Customer</button>
+        <button class="action-btn del" onclick="revokeStaff('${e}')">${t('revoke_access')}</button>
       </div>
     </div>
   `;
@@ -2228,7 +2330,7 @@ function renderApprovals(main){
       <div class="cust-head"><span class="name">${escapeHtml(s.name)}</span><span class="set-pill pending">${t('badge_rejected')}</span></div>
       <div style="font-size:13px;color:#5b6472;">${escapeHtml(s.email)}</div>
       <div class="action-row">
-        <button class="action-btn wa" onclick="approveStaff('${s.email.replace(/'/g,"\\'")}')">${t('approve_anyway')}</button>
+        ${approveButtons_(s.email, true)}
       </div>
     </div>
   `).join('') : '';
@@ -2242,17 +2344,28 @@ function renderApprovals(main){
   `;
 }
 
-async function approveStaff(email){
+async function approveStaff(email, role){
   const s = staffApprovals.find(x=>x.email===email);
   if(!s) return;
   markBusy(t('processing_word'));
   s.status = 'approved';
+  s.role = role === 'customer' ? 'customer' : 'staff';
   s.approvedAt = new Date().toISOString();
   if(s.canDelete === undefined) s.canDelete = false; // owner must explicitly grant delete rights
   if(s.canSeeLocation === undefined) s.canSeeLocation = false; // owner must explicitly grant location view
   if(!Array.isArray(s.allowedTabs)) s.allowedTabs = []; // owner must explicitly switch tabs on
   await saveApprovals();
-  await logActivity('Staff Approved', `${s.name} (${email})`);
+  await logActivity(s.role === 'customer' ? 'Customer Approved' : 'Staff Approved', `${s.name} (${email})`);
+  render();
+}
+
+async function setStaffRole(email, role){
+  const s = staffApprovals.find(x=>x.email===email);
+  if(!s) return;
+  markBusy(t('processing_word'));
+  s.role = role === 'customer' ? 'customer' : 'staff';
+  await saveApprovals();
+  await logActivity(s.role === 'customer' ? 'Changed to Customer' : 'Changed to Staff', `${s.name} (${email})`);
   render();
 }
 
@@ -2540,12 +2653,7 @@ async function handleAiOrderFileUpload(fileList){
       payload = { action:'aiExtractOrder', files: encoded };
     }
 
-    const res = await fetch(SHEET_SCRIPT_URL, {
-      method:'POST',
-      headers: {'Content-Type':'text/plain;charset=utf-8'},
-      body: JSON.stringify(payload)
-    });
-    const result = await res.json();
+    const result = (await apiJson_(payload)) || { success:false, error:'No connection' };
     if(!result.success){
       if(msg) msg.innerHTML = `<div class="msg err">${t('ai_read_failed')}${result.error ? ': '+escapeHtml(result.error) : ''}</div>`;
       const inp2 = document.getElementById('aiOrderFileInput');
@@ -5276,8 +5384,7 @@ async function catGetImg_(it, big){
     try{
       let s = '';
       for(let i = 0; i < it.parts; i++){
-        const r = await fetch(`${SHEET_SCRIPT_URL}?key=${encodeURIComponent('catimg_' + it.id + '_' + i)}`);
-        const d = await r.json();
+        const d = await apiJson_({ action:'get', key:'catimg_' + it.id + '_' + i });
         if(!d || d.value == null) return '';
         s += d.value;
       }
@@ -5331,13 +5438,12 @@ async function catUploadImg_(id, dataUrl){
   for(let i = 0; i < n; i++){
     let ok = false;
     for(let tries = 0; tries < 3 && !ok; tries++){
-      try{ const r = await postToSheet_(mk(i)); ok = !!r && r.ok !== false; }catch(e){ ok = false; }
+      try{ const j = await apiJson_(mk(i)); ok = !!(j && j.ok); }catch(e){ ok = false; }
     }
     if(!ok) throw new Error('SHEET_SAVE_FAILED');
   }
   try{                                                        // make sure the last piece really landed
-    const r = await fetch(`${SHEET_SCRIPT_URL}?key=${encodeURIComponent('catimg_' + id + '_' + (n - 1))}`);
-    const d = await r.json();
+    const d = await apiJson_({ action:'get', key:'catimg_' + id + '_' + (n - 1) });
     if(!d || d.value == null || d.value === '') throw new Error('x');
   }catch(e){ throw new Error('SHEET_SAVE_FAILED'); }
   return n;
@@ -5870,47 +5976,226 @@ function openCatShare(onlySel){
   };
 }
 
-/* ---------- Customer orders arriving from the catalog link -> become normal Pending orders ---------- */
-async function importCatalogOrders_(){
-  if(!currentStaff || !catalogInbox.length || isKeyBusy_('bookings')) return false;
-  const lineIds = new Set(bookings.map(b=>b.id));
-  const known = new Set(catalogImported);
-  const isNew = o=>o && o.id && !known.has(o.id) && !lineIds.has('cat_' + o.id + '_0');
-  if(!catalogInbox.some(isNew)) return false;
-  // Before importing, check the shared "already imported" list once (so a deleted order never comes back).
-  try{
-    const raw = await storageGet('catalogImported');
-    if(raw){ JSON.parse(raw).forEach(x=>known.add(x)); }
-  }catch(e){}
-  const fresh = catalogInbox.filter(isNew);
-  if(!fresh.length) return false;
-  fresh.forEach(o=>{
-    const added = [];
-    (o.lines || []).forEach((l, i)=>{
-      const id = 'cat_' + o.id + '_' + i;
-      if(lineIds.has(id)) return;
-      const row = {
-        id, customerName:String(o.customerName || 'Catalog Customer'), city:o.city || '',
-        brand:String(l.brand || 'Catalog Order'), designNumber:String(l.design), colour:l.colour || '',
-        size:String(l.size), qty:Number(l.qty) || 1, unit:UNIT_EN[l.unit] ? l.unit : 'set',
-        pricePerPcs:l.rate ? String(l.rate) : '', status:'pending', orderedAt:o.createdAt, dispatchedAt:null,
-        orderedBy:{ name:'Catalog (Customer)', mobile:'' }, fromCatalog:true, catItemId:l.itemId || '', custPhone:o.phone || '', note:o.note || ''
-      };
-      bookings.push(row); lineIds.add(id); added.push(row);
-      if(seenBookingIds_) seenBookingIds_.add(id);
-    });
-    known.add(o.id);
-    if(added.length && notifyOrders && Date.now() - new Date(o.createdAt).getTime() < 6 * 3600 * 1000){
-      showOrderNotification_(t('new_order_title'), `${o.customerName} · ${totalsUi_(added)} · Catalog`, 'ssa-co-' + o.id);
-    }
+/* ---------- Catalog orders ----------
+   Customer saves an order -> it WAITS in "Cat. Pending" (customer sees it in Saved Orders).
+   Accept  -> moves to "Cat. Dispatched"; it leaves the customer's Saved Orders and the customer gets an "accepted" notice.
+   Reject  -> moves to the Deleted tab; the customer is NOT notified.
+   All of it is stored and checked on the server (sheet "CatalogOrders"). */
+let catAccepted = [];          // accepted catalog orders (shown in Cat. Dispatched)
+let seenCatIds_ = null, lastInboxSig_ = null, custInit_ = false, cdSearch = '';
+const acceptingCat_ = new Set();
+
+function catLinesItems_(o){ return (o.lines || []).map(l=>({ qty:Number(l.qty) || 0, unit:l.unit === 'pcs' ? 'pcs' : 'set' })); }
+// which server list this person should be loading
+function catApiName_(){
+  if(!currentStaff || !currentStaff.token) return '';
+  if(isCustomerUser_()) return 'myOrders';
+  if(canAccessTab('catPending') || canAccessTab('catDispatched')) return 'catOrders';
+  return '';
+}
+function applyCatOrders_(x){
+  catalogInbox = Array.isArray(x.pending) ? x.pending : [];
+  if(Array.isArray(x.accepted)) catAccepted = x.accepted;
+  if(Array.isArray(x.notify) && x.notify.length) catHandleAccepted_(x.notify);
+}
+async function fetchCatExtra_(st){
+  if(st && st.i !== undefined && st.i !== null) return false;   // already loaded in this round
+  const name = catApiName_(); if(!name) return false;
+  const x = await apiJson_({ action:name });
+  if(x && x.ok){ applyCatOrders_(x); return true; }
+  return false;
+}
+// Customer side: the server tells us once when an order was accepted
+function catHandleAccepted_(list){
+  let saved = []; try{ saved = JSON.parse(localStorage.getItem('ssa_cust_accepted') || '[]') || []; }catch(e){}
+  list.forEach(o=>{
+    if(saved.some(s=>s.id === o.id)) return;
+    const total = totalsPdf_(catLinesItems_(o));
+    saved.unshift({ id:o.id, at:o.decidedAt || new Date().toISOString(), total });
+    showOrderNotification_('✅ Order accepted', `${COMPANY_NAME} has accepted your order · ${total}`, 'ssa-acc-' + o.id);
   });
-  const inboxIds = new Set(catalogInbox.map(o=>o.id));
-  catalogImported = [...known].filter(x=>inboxIds.has(x));
-  try{ localStorage.setItem('ssa_catalogImported', JSON.stringify(catalogImported)); }catch(e){}
+  try{ localStorage.setItem('ssa_cust_accepted', JSON.stringify(saved.slice(0, 20))); }catch(e){}
+}
+function custDismissAccepted_(){ try{ localStorage.removeItem('ssa_cust_accepted'); }catch(e){} render(); }
+function custAcceptedBanner_(){
+  let saved = []; try{ saved = JSON.parse(localStorage.getItem('ssa_cust_accepted') || '[]') || []; }catch(e){}
+  if(!saved.length) return '';
+  return `<div class="msg ok" style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start;"><div>${saved.map(x=>`✅ Order accepted — ${escapeHtml(x.total)} (${fmtTime(x.at)})`).join('<br>')}</div><button class="secondary" style="width:auto;padding:4px 12px;" onclick="custDismissAccepted_()">OK</button></div>`;
+}
+
+function pendingCatOrders_(){ return catalogInbox.filter(o=>o && o.id && Array.isArray(o.lines) && o.lines.length).sort((a,b)=>new Date(b.createdAt) - new Date(a.createdAt)); }
+function myCatOrders_(){ return pendingCatOrders_(); }   // the server already sends a customer only their own orders
+function updateCatBadge_(){
+  const b = document.getElementById('catPendBadge'); if(!b) return;
+  const n = (currentStaff && !isCustomerUser_() && canAccessTab('catPending')) ? pendingCatOrders_().length : 0;
+  b.textContent = n > 99 ? '99+' : String(n);
+  b.style.display = n ? 'inline-block' : 'none';
+}
+
+// Runs on every refresh: raises the new-order alert + badge and tells the screen when the lists changed.
+async function importCatalogOrders_(){
+  if(!currentStaff) return false;
+  const sig = catalogInbox.map(o=>o && o.id).join(',') + '|' + catAccepted.map(o=>o && o.id).join(',');
+  const changed = lastInboxSig_ !== null && sig !== lastInboxSig_;
+  lastInboxSig_ = sig;
+  if(!isCustomerUser_() && canAccessTab('catPending')){
+    const pend = pendingCatOrders_();
+    if(seenCatIds_ === null){ seenCatIds_ = new Set(pend.map(o=>o.id)); }
+    else{
+      pend.filter(o=>!seenCatIds_.has(o.id)).forEach(o=>{
+        seenCatIds_.add(o.id);
+        if(notifyOrders && Date.now() - new Date(o.createdAt).getTime() < 6 * 3600 * 1000){
+          showOrderNotification_(t('new_order_title'), `${o.customerName} · ${totalsUi_(catLinesItems_(o))} · Catalog`, 'ssa-co-' + o.id);
+        }
+      });
+    }
+  }
+  updateCatBadge_();
+  return changed;
+}
+
+async function decideCat_(id, decision){
+  if(!canAccessTab('catPending') || acceptingCat_.has(id)) return null;
+  if(!navigator.onLine){ alert('Internet is needed to accept or reject an order.'); return null; }
+  const o = catalogInbox.find(x=>x && x.id === id);
+  if(!o) return null;
+  acceptingCat_.add(id);
+  try{
+    const r = await apiJson_({ action:'decideOrder', id, decision });
+    if(!r || !r.ok){
+      alert(r && r.code === 'conflict' ? 'Someone else has already handled this order.' : ((r && r.error) || 'Could not save — please check your internet and try again.'));
+      silentRefresh_();
+      return null;
+    }
+    catalogInbox = catalogInbox.filter(x=>x.id !== id);
+    return r.order || o;
+  }finally{ acceptingCat_.delete(id); }
+}
+
+async function acceptCatalogOrder(id){
+  markBusy(t('processing_word'));
+  const o = await decideCat_(id, 'accept');
+  if(!o){ render(); return; }
+  catAccepted = [o].concat(catAccepted.filter(x=>x.id !== o.id));
+  await logActivity('Catalog Order Accepted', `${o.customerName} (${(o.lines||[]).length} design)`);
+  render();
+}
+
+async function rejectCatalogOrder(id){
+  const o0 = catalogInbox.find(x=>x && x.id === id);
+  if(!o0) return;
+  if(!confirm(`Reject this order from ${o0.customerName}?\nIt will move to the Deleted tab. The customer will NOT be notified.`)) return;
+  markBusy(t('processing_word'));
+  const o = await decideCat_(id, 'reject');
+  if(!o){ render(); return; }
+  const now = new Date().toISOString();
+  const by = currentStaff ? { name:currentStaff.name, mobile:currentStaff.mobile } : null;
+  const have = new Set(bookings.map(b=>b.id));
+  (o.lines || []).forEach((l, i)=>{
+    const rid = 'cat_' + o.id + '_' + i;
+    if(have.has(rid)) return;
+    bookings.push({
+      id:rid, customerName:String(o.customerName || 'Catalog Customer'), city:o.city || '',
+      brand:String(l.brand || 'Catalog Order'), designNumber:String(l.design), colour:l.colour || '',
+      size:String(l.size), qty:Number(l.qty) || 1, unit:UNIT_EN[l.unit] ? l.unit : 'set',
+      pricePerPcs:l.rate ? String(l.rate) : '', status:'pending', orderedAt:o.createdAt, dispatchedAt:null,
+      orderedBy:{ name:'Catalog (Customer)', mobile:'' }, fromCatalog:true, catItemId:l.itemId || '',
+      custPhone:o.phone || '', custEmail:o.email || '', note:o.note || '',
+      trashed:true, trashedAt:now, trashedBy:by, rejectedCatalog:true
+    });
+    if(seenBookingIds_) seenBookingIds_.add(rid);
+  });
   await saveData();
-  await storageSet('catalogImported', JSON.stringify(catalogImported));
-  await logActivity('Catalog Order Received', fresh.map(o=>`${o.customerName} (${(o.lines||[]).length} design)`).join(', '));
-  return true;
+  await logActivity('Catalog Order Rejected', `${o.customerName} (${(o.lines||[]).length} design)`);
+  render();
+}
+
+function catOrderPdf(id){
+  const o = catalogInbox.find(x=>x && x.id === id) || catAccepted.find(x=>x && x.id === id);
+  if(o) pubShowPdf_(o);
+}
+function catLinesHtml_(o){
+  const rows = o.lines.map(l=>`<tr><td style="padding:5px 4px;border-bottom:1px solid var(--line);">${escapeHtml(l.design)}${l.brand ? ' <span style="color:#7a8494">(' + escapeHtml(l.brand) + ')</span>' : ''}</td><td style="padding:5px 4px;border-bottom:1px solid var(--line);">${escapeHtml(l.size)}</td><td style="padding:5px 4px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap;">${escapeHtml(l.qty)} ${l.unit === 'pcs' ? 'Pcs' : 'Set'}</td></tr>`).join('');
+  return `<div style="overflow-x:auto;margin-top:8px;"><table style="width:100%;border-collapse:collapse;font-size:13.5px;"><thead><tr style="text-align:left;color:#5b6472;"><th style="padding:4px;">Design</th><th style="padding:4px;">Size</th><th style="padding:4px;text-align:right;">Qty</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+function catWhoHtml_(o){
+  const bits = [o.city, o.phone, o.email].filter(Boolean).map(escapeHtml).join(' · ');
+  return bits ? bits + ' · ' : '';
+}
+
+// Owner / allowed staff: the "Cat. Pending" tab
+function renderCatPending(main){
+  const list = pendingCatOrders_();
+  const head = `<div class="card"><h2>🛍️ Cat. Pending (${list.length})</h2><div class="subtle">Orders saved by customers from the catalog. <b>Accept</b> moves an order to Cat. Dispatched and tells the customer it was accepted. <b>Reject</b> moves it to the Deleted tab and the customer is not told. Until you decide, the customer keeps seeing it in Saved Orders.</div></div>`;
+  if(!list.length){ main.innerHTML = head + `<div class="empty">No pending catalog orders</div>`; return; }
+  main.innerHTML = head + list.map(o=>`
+    <div class="cust-card">
+      <div class="cust-head"><span class="name">${escapeHtml(o.customerName || 'Customer')}</span><span class="set-pill pending">${escapeHtml(totalsPdf_(catLinesItems_(o)))}</span></div>
+      <div style="font-size:13px;color:#5b6472;">${catWhoHtml_(o)}${fmtTime(o.createdAt)}</div>
+      ${o.note ? `<div style="font-size:13px;margin-top:4px;">📝 ${escapeHtml(o.note)}</div>` : ''}
+      ${catLinesHtml_(o)}
+      <div class="action-row" style="margin-top:10px;">
+        <button class="action-btn wa" onclick="acceptCatalogOrder('${o.id}')">✅ Accept</button>
+        <button class="action-btn del" onclick="rejectCatalogOrder('${o.id}')">✖ Reject</button>
+        <button class="action-btn" onclick="catOrderPdf('${o.id}')">📄 PDF</button>
+      </div>
+    </div>`).join('');
+}
+
+// Owner / allowed staff: the "Cat. Dispatched" tab (accepted catalog orders)
+function catDispListHtml_(){
+  const q = cdSearch.trim().toLowerCase();
+  const list = catAccepted.filter(o=>o && Array.isArray(o.lines) && (!q || String(o.customerName || '').toLowerCase().includes(q)));
+  if(!list.length) return `<div class="empty">${q ? 'No accepted order for this search' : 'No accepted catalog orders yet'}</div>`;
+  return list.map(o=>`
+    <div class="cust-card">
+      <div class="cust-head"><span class="name">${escapeHtml(o.customerName || 'Customer')}</span><span class="set-pill done">${escapeHtml(totalsPdf_(catLinesItems_(o)))}</span></div>
+      <div style="font-size:13px;color:#5b6472;">${catWhoHtml_(o)}Ordered ${fmtTime(o.createdAt)}${o.decidedAt ? ' · Accepted ' + fmtTime(o.decidedAt) : ''}${o.decidedBy ? ' by ' + escapeHtml(o.decidedBy) : ''}</div>
+      ${o.note ? `<div style="font-size:13px;margin-top:4px;">📝 ${escapeHtml(o.note)}</div>` : ''}
+      ${catLinesHtml_(o)}
+      <div class="action-row" style="margin-top:10px;"><button class="action-btn" onclick="catOrderPdf('${o.id}')">📄 PDF</button></div>
+    </div>`).join('');
+}
+function cdSearchInput_(v){ cdSearch = v; const el = gid_('cdList'); if(el) el.innerHTML = catDispListHtml_(); }
+function renderCatDispatched(main){
+  main.innerHTML = `<div class="card"><h2>🚚 Cat. Dispatched (${catAccepted.length})</h2><div class="subtle">Catalog orders that have been accepted.</div>
+    <input id="cdSearchInp" placeholder="Search customer" value="${escapeHtml(cdSearch)}" oninput="cdSearchInput_(this.value)" style="margin-top:8px;"></div>
+    <div id="cdList">${catDispListHtml_()}</div>`;
+}
+
+// Customer: catalog (same screen as the public catalog link, inside the app)
+function renderCustCatalog(main){
+  if(!custInit_){
+    custInit_ = true;
+    try{ pubCart = JSON.parse(localStorage.getItem('ssa_pub_cart') || '[]') || []; }catch(e){ pubCart = []; }
+  }
+  if(catalog.length){
+    const n = pubCart.length;
+    pubCart = pubCart.filter(e=>{ const c = catalog.find(z=>z.id === e.id); return c && pubVisible_(c); });
+    if(pubCart.length !== n) pubSave_();
+  }
+  pubShell_();
+}
+
+// Customer: only THEIR OWN waiting orders, view / PDF only — no edit, no delete
+function renderCustOrders(main){
+  const list = myCatOrders_();
+  const head = `${custAcceptedBanner_()}<div class="card"><h2>📄 Saved Orders (${list.length})</h2><div class="subtle">These orders are with ${escapeHtml(COMPANY_NAME)} and waiting to be accepted. A saved order cannot be changed — please contact us if something needs correcting. When we accept an order it moves out of this list and you will see an “Order accepted” message.</div></div>`;
+  if(!list.length){ main.innerHTML = head + `<div class="empty">No saved orders waiting</div>`; return; }
+  main.innerHTML = head + list.map(o=>`
+    <div class="cust-card">
+      <div class="cust-head"><span class="name">${fmtTime(o.createdAt)}</span><span class="set-pill pending">${escapeHtml(totalsPdf_(catLinesItems_(o)))}</span></div>
+      ${o.note ? `<div style="font-size:13px;margin-top:4px;">📝 ${escapeHtml(o.note)}</div>` : ''}
+      ${catLinesHtml_(o)}
+      <div class="action-row" style="margin-top:10px;">
+        <button class="action-btn wa" onclick="catOrderPdf('${o.id}')">📄 View PDF</button>
+      </div>
+    </div>`).join('');
+}
+
+// Approved person with no tab switched on yet
+function renderNoAccess_(main){
+  main.innerHTML = `<div class="card"><h2>Access pending</h2><div class="subtle">You are approved, but no tab has been switched on for you yet. Please ask the owner (${escapeHtml(OWNER_EMAIL)}) to allow the tabs you need.</div></div>`;
 }
 
 /* ---------- Dashboard ---------- */
@@ -6134,6 +6419,7 @@ async function gFinish_(info){
         const cu = JSON.parse(localStorage.getItem('ssa_pub_cust') || '{}') || {};
         cu.name = name; cu.phone = phone; localStorage.setItem('ssa_pub_cust', JSON.stringify(cu));
       }catch(e){}
+      try{ const got = await catLoadAll_(); if(got) catalog = got.list; }catch(e){ console.error('catalog load', e); }   // the catalog is only sent after sign-in
       const ov = gid_('pubLoginOv'); if(ov) ov.remove();
       pubCart = pubCart.filter(e=>{ const c = catalog.find(z=>z.id === e.id); return c && pubVisible_(c); }); pubSave_();
       pubShell_();
@@ -6143,10 +6429,16 @@ async function gFinish_(info){
   }catch(e){ err('Could not complete sign-in — please check internet and try again'); }
   btn.disabled = false; btn.textContent = 'Open Catalog';
 }
-function pubId_(){ try{ return JSON.parse(localStorage.getItem('ssa_pub_id') || 'null'); }catch(e){ return null; } }
+function pubId_(){
+  if(isCustomerUser_()){
+    let ph = ''; try{ ph = (JSON.parse(localStorage.getItem('ssa_pub_cust') || '{}') || {}).phone || ''; }catch(e){}
+    return { name:currentStaff.name, phone:ph, email:currentStaff.mobile };
+  }
+  try{ return JSON.parse(localStorage.getItem('ssa_pub_id') || 'null'); }catch(e){ return null; }
+}
 function pubVisible_(c){
   if(c.hidden) return false;
-  if(catLoginOn_() && !pubDev_()) return false;                // nothing shows before the Google sign-in is done
+  if(catLoginOn_() && !pubDev_() && !isCustomerUser_()) return false;   // nothing shows before the Google sign-in is done (approved app customers are already signed in)
   const who = pubId_();
   if(c.hideFor && c.hideFor.length) return !!who && !catHiddenFor_(c, who);   // not identified yet -> stay hidden
   return true;
@@ -6206,7 +6498,7 @@ function pubShell_(){
     <div class="pub-head">
       <img src="${COMPANY_LOGO_B64}" alt="">
       <div class="t"><b>${escapeHtml(COMPANY_NAME)}</b><span>Catalog — choose designs and place your order</span></div>
-      <input id="pubSearchInp" placeholder="Search design / size" oninput="pubSearch=this.value;pubShow=150;pubGrid_()">
+      <input id="pubSearchInp" placeholder="Search design / size" value="${escapeHtml(pubSearch)}" oninput="pubSearch=this.value;pubShow=150;pubGrid_()">
     </div>
     ${catLoginOn_() ? (pubDev_() ? `<div class="subtle" style="text-align:right;padding:4px 10px">👤 ${escapeHtml(pubDev_().name || '')} · <a href="#" onclick="if(confirm('Sign out from this phone? You will need to sign in with Google again.'))pubSignOut_();return false">Not you?</a></div>` : '')
       : (catalog.some(c=>c.hideFor && c.hideFor.length) && pubId_() ? `<div class="subtle" style="text-align:right;padding:4px 10px"><a href="#" onclick="pubOpenGate_(true);return false">👤 ${escapeHtml(pubId_().name || '')} · change</a></div>` : '')}
@@ -6220,10 +6512,12 @@ async function initPublicCatalog_(){
   try{ pubCart = JSON.parse(localStorage.getItem('ssa_pub_cart') || '[]') || []; }catch(e){ pubCart = []; }
   pubShell_();
   if(catLoginOn_()){ if(!pubDev_()) pubLoginGate_(); else pubCheckDevice_(); }
-  try{
-    const got = await catLoadAll_();
-    if(got) catalog = got.list;
-  }catch(e){ console.error('catalog load', e); }
+  if(pubDev_()){
+    try{
+      const got = await catLoadAll_();
+      if(got) catalog = got.list;
+    }catch(e){ console.error('catalog load', e); }
+  }
   pubCart = pubCart.filter(e=>{ const c = catalog.find(z=>z.id === e.id); return c && pubVisible_(c); });
   pubShell_();
   if(!catLoginOn_() && catalog.some(c=>c.hideFor && c.hideFor.length) && !pubId_()) pubOpenGate_(false);
@@ -6277,7 +6571,7 @@ function pubSheetHtml_(){
   const cust = (()=>{ try{ return JSON.parse(localStorage.getItem('ssa_pub_cust') || '{}') || {}; }catch(e){ return {}; } })();
   const single = pubSheetMode !== 'cart';
   const body = single ? pubEditorHtml_(pubSheetMode) : pubCart.map((_, i)=>pubEditorHtml_(i)).join('');
-  const nm = gid_('pubName') ? gid_('pubName').value : (cust.name || '');
+  const nm = gid_('pubName') ? gid_('pubName').value : (cust.name || (isCustomerUser_() ? currentStaff.name : ''));
   const ct = gid_('pubCity') ? gid_('pubCity').value : (cust.city || '');
   const dev_ = catLoginOn_() ? pubDev_() : null;
   const ph = dev_ ? dev_.phone : (gid_('pubPhone') ? gid_('pubPhone').value : (cust.phone || ''));
@@ -6334,24 +6628,16 @@ function pubZoom(id){
   catLimit_(()=>catGetImg_(it, true)).then(src=>{ const i = gid_('pzImg'); if(i && src) i.src = src; });
 }
 
-async function pubFetchKey_(key){
-  const r = await fetch(`${SHEET_SCRIPT_URL}?key=${encodeURIComponent(key)}`);
-  const d = await r.json();
-  return d && d.value != null ? d.value : null;
-}
+let pubSendErr_ = '';
+// The server saves the order itself (one safe step) — no more read-modify-write of a shared list on the phone.
 async function pubSendOrder_(order){
   const sleep = ms=>new Promise(r=>setTimeout(r, ms));
+  pubSendErr_ = '';
   for(let attempt = 0; attempt < 3; attempt++){
-    try{
-      const raw = await pubFetchKey_('catalogInbox');
-      let arr = []; try{ arr = raw ? JSON.parse(raw) : []; }catch(e){ arr = []; }
-      arr = arr.filter(o=>o && Date.now() - new Date(o.createdAt).getTime() < 30 * 86400000);
-      if(!arr.some(o=>o.id === order.id)) arr.push(order);
-      await postToSheet_({ key:'catalogInbox', value:JSON.stringify(arr) });
-      await sleep(1300);
-      const chk = await pubFetchKey_('catalogInbox');                 // make sure it really landed
-      if(chk && JSON.parse(chk).some(o=>o.id === order.id)) return true;
-    }catch(e){ console.error('order send attempt failed', e); await sleep(800); }
+    const j = await apiJson_({ action:'placeOrder', order });
+    if(j && j.ok) return true;
+    if(j && (j.code === 'bad_request' || j.code === 'limit' || j.code === 'forbidden')){ pubSendErr_ = j.error || ''; return false; }
+    await sleep(800);
   }
   return false;
 }
@@ -6437,16 +6723,18 @@ async function pubSubmit_(){
   if(!name) return setMsg('Please enter your name');
   if(!navigator.onLine || !cloudAvailable) return setMsg('Internet connection is needed to send the order. Your selection is saved — please try again when online.');
   const btn = gid_('pubSaveBtn'); btn.disabled = true; btn.textContent = 'Saving order…';
-  const order = { id:'co' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), customerName:name, city, phone, note, createdAt:new Date().toISOString(), lines };
+  const order = { id:'co' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), customerName:name, city, phone, note, createdAt:new Date().toISOString(), lines, email:String(isCustomerUser_() ? currentStaff.mobile : ((pubDev_() || pubId_() || {}).email || '')).toLowerCase() };
   const ok = await pubSendOrder_(order);
-  if(!ok){ btn.disabled = false; btn.textContent = 'Save Order & Get PDF'; return setMsg('Order could not be sent. Please check your internet and press Save again.'); }
+  if(!ok){ btn.disabled = false; btn.textContent = 'Save Order & Get PDF'; return setMsg(escapeHtml(pubSendErr_) || 'Order could not be sent. Please check your internet and press Save again.'); }
   try{ sendOrderPush_(name, '', totalsPdf_(pubOrderRows_(order)), order.createdAt); }catch(e){}
+  try{ if(!catalogInbox.some(o=>o.id === order.id)) catalogInbox.push(order); }catch(e){}   // shows in Saved Orders straight away
   pubLastOrder = order; pubCart = []; pubSave_(); pubGrid_(); pubFab_();
   const ov = gid_('pubSheet');
   ov.innerHTML = `<div class="modal-sheet" style="text-align:center">
     <div style="font-size:46px">✅</div><h2 style="margin:6px 0">Order saved!</h2>
     <div class="subtle" style="margin-bottom:14px">${escapeHtml(name)}, your order has been sent to ${escapeHtml(COMPANY_NAME)}.</div>
     <button class="primary" onclick="pubShowPdf_(pubLastOrder)">📄 Get Order PDF</button>
+    ${isCustomerUser_() ? `<button class="secondary" style="margin-top:8px" onclick="pubCloseSheet_();goTab_('custOrders')">📑 My Saved Orders</button>` : ''}
     <button class="secondary" style="margin-top:8px" onclick="pubCloseSheet_()">Back to catalog</button></div>`;
   pubShowPdf_(order);
 }
