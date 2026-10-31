@@ -1577,8 +1577,17 @@ async function fetchCloudState_(){
 // a refresh must not overwrite those local changes with older cloud data.
 function isKeyBusy_(key){ return dirtyKeys.includes(key) || pushInFlight_.has(key) || pushQueued_.has(key); }
 
+// The person's role on THIS device (customer / staff / owner / other) — used to notice when the owner changes it.
+function roleKey_(){
+  if(!currentStaff || !currentStaff.mobile) return 'none';
+  if(isOwnerUser_()) return 'owner';
+  const e = approvalEntry_();
+  if(!e || e.status !== 'approved') return 'other';
+  return e.role === 'customer' ? 'customer' : 'staff';
+}
 function applyCloudState_(st){
   let changed = false;
+  const roleBefore_ = roleKey_();
   lastSyncAt_ = new Date();
   try{ if(st.i && st.i.ok) applyCatOrders_(st.i); }catch(e){ console.error('orders apply', e); }
   try{
@@ -1604,6 +1613,19 @@ function applyCloudState_(st){
       staffApprovals = st.s ? JSON.parse(st.s) : []; lastCloudRaw_.s = st.s; changed = true;
     }
   }catch(e){ console.error('approvals parse', e); }
+  // Owner switched this person between Customer and Staff: restart the app once so it loads everything fresh for the new role
+  try{
+    const roleAfter_ = roleKey_();
+    if(roleBefore_ !== roleAfter_ && (roleBefore_ === 'customer' || roleAfter_ === 'customer') && roleBefore_ !== 'none' && roleAfter_ !== 'none' && roleAfter_ !== 'other'){
+      const last = Number(sessionStorage.getItem('ssa_roleReloadAt') || 0);
+      if(Date.now() - last > 60000){
+        sessionStorage.setItem('ssa_roleReloadAt', String(Date.now()));
+        try{ localStorage.setItem('ssa_staffApprovals', JSON.stringify(staffApprovals)); }catch(e){}
+        try{ localStorage.removeItem('ssa_pub_cart'); }catch(e){}
+        setTimeout(()=>location.reload(), 300);
+      }
+    }
+  }catch(e){ console.error('role change check', e); }
   return changed;
 }
 
@@ -2369,9 +2391,13 @@ async function setStaffRole(email, role){
   if(!s) return;
   markBusy(t('processing_word'));
   s.role = role === 'customer' ? 'customer' : 'staff';
+  if(!Array.isArray(s.allowedTabs)) s.allowedTabs = [];
+  if(s.canDelete === undefined) s.canDelete = false;
+  if(s.canSeeLocation === undefined) s.canSeeLocation = false;
   await saveApprovals();
   await logActivity(s.role === 'customer' ? 'Changed to Customer' : 'Changed to Staff', `${s.name} (${email})`);
   render();
+  if(s.role === 'staff' && !s.allowedTabs.length) alert(`${s.name} is now Staff, but no tab is switched on yet.\n\nPlease switch on the tabs (Order, Catalog ...) in ${s.name}'s card, otherwise the app shows "Access pending".`);
 }
 
 // Who may switch "new catalog photos" on/off for a customer: the owner always; a staff member ONLY after the owner has allowed it.
@@ -5549,7 +5575,7 @@ function renderCatalog(main){
       <button class="btn-pill alt" onclick="catPickMany()">🗂️ Add Many Photos</button>
       ${canCatFreeze_() ? `<button class="btn-pill ghost" onclick="openCatFreeze()">👥 Customer Photos</button>` : ''}
       ${catDateBtn_()}
-      ${catSel.size ? `<button class="btn-pill" style="background:#25D366;color:#063" onclick="catSendPhotos()">📷 Send ${catSel.size} photo${catSel.size > 1 ? 's' : ''} on WhatsApp</button><button class="btn-pill alt" onclick="openCatShare(true)">Share ${catSel.size} selected link</button><button class="btn-pill ghost" onclick="catSel.clear();render()">Clear</button>` : ''}
+      ${catSel.size ? `<button class="btn-pill" style="background:#25D366;color:#063" onclick="catSendPhotos()">📷 Send ${catSel.size} photo${catSel.size > 1 ? 's' : ''} on WhatsApp</button><button class="btn-pill alt" onclick="openCatShare(true)">Share ${catSel.size} selected link</button>${canCurrentUserDelete() ? `<button class="btn-pill" style="background:#c0392b;color:#fff" onclick="deleteSelectedCatDesigns()">🗑️ Delete ${catSel.size}</button>` : ''}<button class="btn-pill ghost" onclick="catSel.clear();render()">Clear</button>` : ''}
     </div>
     <div id="catGrid">${catGridHtml_()}</div>
     <button class="fab" onclick="openCatForm()">＋ ADD NEW DESIGN</button>`;
@@ -5953,6 +5979,24 @@ async function saveCatForm(next){
   closeCatForm();
   render();
   if(next && !wasEdit) openCatForm(null, keep);
+}
+async function deleteSelectedCatDesigns(){
+  if(!canCurrentUserDelete()){ alert('You do not have permission to delete. Please ask the owner.'); return; }
+  const items = catalog.filter(c=>catSel.has(c.id));
+  if(!items.length) return;
+  if(!confirm(`Delete ${items.length} selected design${items.length > 1 ? 's' : ''} from the catalog?\n\nThis cannot be undone.`)) return;
+  markBusy(t('processing_word'));
+  const ids = new Set(items.map(x=>x.id));
+  catalog = catalog.filter(x=>!ids.has(x.id));
+  catSel.clear();
+  await saveCatalog();
+  await logActivity('Catalog Designs Deleted', `${items.length} design(s): ` + items.slice(0, 15).map(x=>x.name).join(', ') + (items.length > 15 ? ' …' : ''));
+  render();
+  // photo files are removed in the background, after the list is already updated
+  for(const it of items){
+    if(it.fileId){ try{ await postToSheet_({ action:'deleteCatalogImage', fileId:it.fileId }); }catch(e){} }
+    for(let i = 0; i < (it.parts || 0); i++){ try{ await postToSheet_({ key:'catimg_' + it.id + '_' + i, value:'' }); }catch(e){} }
+  }
 }
 async function deleteCatDesign(){
   const it = catalog.find(x=>x.id === catEditId);
