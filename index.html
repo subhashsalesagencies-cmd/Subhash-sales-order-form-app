@@ -2294,7 +2294,9 @@ function renderApprovals(main){
       <div class="cust-head"><span class="name">${escapeHtml(s.name)}</span><span class="set-pill done">🛍️ Customer</span></div>
       <div style="font-size:13px;color:#5b6472;">${escapeHtml(s.email)}</div>
       <div style="font-size:12px;color:#5b6472;margin-top:6px;">Sees only: Catalog + Saved Orders</div>
+      <div style="margin-top:6px;"><span class="set-pill ${s.catFrozenAt ? 'pending' : 'done'}">${s.catFrozenAt ? '⏸️ New photos OFF' + (catShowDates ? ' since ' + escapeHtml(fmtTime(s.catFrozenAt)) : '') : '🖼️ New photos ON'}</span></div>
       <div class="action-row" style="margin-top:10px;">
+        <button class="action-btn ${s.catFrozenAt ? 'wa' : 'del'}" onclick="toggleCatFreeze('${e}')">${s.catFrozenAt ? '✅ Enable new catalog photos' : '🚫 Disable new catalog photos'}</button>
         <button class="action-btn wa" onclick="setStaffRole('${e}','staff')">Make Staff</button>
         <button class="action-btn del" onclick="revokeStaff('${e}')">${t('revoke_access')}</button>
       </div>
@@ -2312,12 +2314,14 @@ function renderApprovals(main){
       <div style="margin-top:6px;">
         <span class="set-pill ${s.canDelete ? 'done' : 'pending'}">${s.canDelete ? t('delete_allowed') : t('delete_blocked')}</span>
         <span class="set-pill ${s.canSeeLocation ? 'done' : 'pending'}">📍 ${s.canSeeLocation ? t('loc_allowed') : t('loc_blocked')}</span>
+        <span class="set-pill ${s.canCatFreeze ? 'done' : 'pending'}">🖼️ Customer photo control ${s.canCatFreeze ? 'allowed' : 'blocked'}</span>
       </div>
       <div style="font-size:12px;color:#5b6472;margin-top:10px;margin-bottom:4px;">Tabs this person can see (nothing is visible until you switch it on):</div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;">${tabToggles}</div>
       <div class="action-row" style="margin-top:10px;">
         <button class="action-btn ${s.canDelete ? 'del' : 'wa'}" onclick="toggleDeletePermission('${e}')">${s.canDelete ? t('block_delete') : t('allow_delete')}</button>
         <button class="action-btn ${s.canSeeLocation ? 'del' : 'wa'}" onclick="toggleLocPermission('${e}')">📍 ${s.canSeeLocation ? t('block_loc') : t('allow_loc')}</button>
+        <button class="action-btn ${s.canCatFreeze ? 'del' : 'wa'}" onclick="toggleCatFreezePermission('${e}')">🖼️ ${s.canCatFreeze ? 'Block customer photo control' : 'Allow customer photo control'}</button>
         <button class="action-btn" onclick="setStaffRole('${e}','customer')">Make Customer</button>
         <button class="action-btn del" onclick="revokeStaff('${e}')">${t('revoke_access')}</button>
       </div>
@@ -2336,6 +2340,7 @@ function renderApprovals(main){
   `).join('') : '';
 
   main.innerHTML = `
+    <div style="display:flex;justify-content:flex-end;margin-bottom:8px;">${catDateBtn_().replace(' style="margin-left:auto"','')}</div>
     <div class="card"><h2>${t('pending_requests')} (${pending.length})</h2></div>
     ${pendingHtml}
     <div class="card" style="margin-top:18px;"><h2>${t('approved_staff')} (${approved.length})</h2></div>
@@ -2367,6 +2372,65 @@ async function setStaffRole(email, role){
   await saveApprovals();
   await logActivity(s.role === 'customer' ? 'Changed to Customer' : 'Changed to Staff', `${s.name} (${email})`);
   render();
+}
+
+// Who may switch "new catalog photos" on/off for a customer: the owner always; a staff member ONLY after the owner has allowed it.
+function canCatFreeze_(){
+  if(!currentStaff || !currentStaff.mobile || isCustomerUser_()) return false;
+  if(isOwnerUser_()) return true;
+  const e = approvalEntry_();
+  return !!(e && e.status === 'approved' && e.role !== 'customer' && e.canCatFreeze === true);
+}
+async function toggleCatFreezePermission(email){
+  if(!isOwnerUser_()) return;
+  const s = staffApprovals.find(x=>x.email===email);
+  if(!s) return;
+  markBusy(t('processing_word'));
+  s.canCatFreeze = !s.canCatFreeze;
+  await saveApprovals();
+  await logActivity(s.canCatFreeze ? 'Customer Photo Control Allowed' : 'Customer Photo Control Blocked', `${s.name} (${email})`);
+  render();
+}
+// Disable = this customer sees only designs added BEFORE this moment. Enable = they see everything again (incl. designs added meanwhile).
+async function toggleCatFreeze(email){
+  if(!canCatFreeze_()){ alert('Only the owner, or a staff member the owner has allowed, can change this.'); return; }
+  const s = staffApprovals.find(x=>x.email===email);
+  if(!s || s.role !== 'customer') return;
+  const turningOff = !s.catFrozenAt;
+  if(turningOff && !confirm(`Disable new catalog photos for ${s.name}?\n\nThey will keep seeing the designs added up to now. Designs you add from now on will NOT show to them until you enable again.`)) return;
+  markBusy(t('processing_word'));
+  if(turningOff){ s.catFrozenAt = new Date().toISOString(); s.catFrozenBy = (currentStaff && currentStaff.name) || ''; } else { delete s.catFrozenAt; delete s.catFrozenBy; }
+  await saveApprovals();
+  await logActivity(turningOff ? 'Catalog Updates Disabled' : 'Catalog Updates Enabled', `${s.name} (${email})${currentStaff && currentStaff.name ? ' — by ' + currentStaff.name : ''}`);
+  render();
+  if(gid_('catFreezeOv')) catFreezeRefresh_();
+}
+// Catalog tab: list of customers with Disable / Enable (owner + allowed staff only)
+let catFreezeQ_ = '';
+function catFreezeListHtml_(){
+  const q = catFreezeQ_.trim().toLowerCase();
+  const list = staffApprovals.filter(s=>s.status==='approved' && s.role==='customer' && (!q || (String(s.name||'') + ' ' + String(s.email||'')).toLowerCase().includes(q)))
+    .sort((a,b)=>String(a.name||'').localeCompare(String(b.name||'')));
+  if(!list.length) return '<div class="empty">No customers found</div>';
+  return list.map(s=>`<div class="cust-card">
+      <div class="cust-head"><span class="name">${escapeHtml(s.name)}</span><span class="set-pill ${s.catFrozenAt ? 'pending' : 'done'}">${s.catFrozenAt ? '⏸️ New photos OFF' + (catShowDates ? ' since ' + escapeHtml(fmtTime(s.catFrozenAt)) : '') : '🖼️ New photos ON'}</span></div>
+      <div style="font-size:13px;color:#5b6472;">${escapeHtml(s.email)}</div>
+      <div class="action-row" style="margin-top:8px;"><button class="action-btn ${s.catFrozenAt ? 'wa' : 'del'}" onclick="toggleCatFreeze('${jq_(s.email)}')">${s.catFrozenAt ? '✅ Enable new catalog photos' : '🚫 Disable new catalog photos'}</button></div>
+    </div>`).join('');
+}
+function catFreezeRefresh_(){ const b = gid_('catFreezeBody'); if(b) b.innerHTML = catFreezeListHtml_(); }
+function openCatFreeze(){
+  if(!canCatFreeze_()){ alert('You do not have permission for this. Please ask the owner.'); return; }
+  const old = gid_('catFreezeOv'); if(old) old.remove();
+  catFreezeQ_ = '';
+  const ov = document.createElement('div'); ov.className = 'modal-ov'; ov.id = 'catFreezeOv'; ov.style.zIndex = 9300;
+  ov.innerHTML = `<div class="modal-sheet">
+    <div class="voice-head"><b>Customer Photos (New designs)</b><button class="voice-x" onclick="gid_('catFreezeOv').remove()">✕</button></div>
+    <input class="filter-input" placeholder="Search customer" oninput="catFreezeQ_=this.value;catFreezeRefresh_()">
+    <div id="catFreezeBody" style="margin-top:10px;">${catFreezeListHtml_()}</div>
+  </div>`;
+  document.body.appendChild(ov);
+  ov.addEventListener('click', e=>{ if(e.target === ov) ov.remove(); });
 }
 
 async function toggleLocPermission(email){
@@ -5452,6 +5516,17 @@ function catTitle_(c){ return c.name + (c.sizes ? ' ' + c.sizes : ''); }
 function catRate_(c){ const r = Number(c.rate) || 0; return r ? r : 0; }
 
 /* ---------- Owner / staff: Catalog tab ---------- */
+let catShowDates = false;   // owner/staff only: dates stay hidden until "Show date" is tapped (never available to customers)
+function catDateBtn_(){
+  if(isCustomerUser_()) return '';
+  return `<button class="btn-pill ghost" style="margin-left:auto" onclick="toggleCatDates()">${catShowDates ? '🙈 Hide date' : '📅 Show date'}</button>`;
+}
+function toggleCatDates(){ catShowDates = !catShowDates; render(); }
+function catDateTxt_(iso){
+  if(isCustomerUser_() || !catShowDates || !iso) return '';
+  const d = new Date(iso); if(isNaN(d)) return '';
+  return d.toLocaleDateString('en-IN', { day:'2-digit', month:'short', year:'numeric' });
+}
 let catSearch = '', catSel = new Set(), catEditId = null, catFile = null, catShow = 150;
 
 function catGridHtml_(){
@@ -5463,7 +5538,7 @@ function catGridHtml_(){
     <div class="cat-card ${c.hidden ? 'hid' : ''}" onclick="openCatForm('${c.id}')">
       <label class="cat-chk" onclick="event.stopPropagation()"><input type="checkbox" ${catSel.has(c.id) ? 'checked' : ''} onchange="toggleCatSel('${c.id}', this.checked)"></label>
       <div class="cat-img"><img data-cid="${c.id}" alt=""></div>
-      <div class="cat-meta"><div class="cat-rate">Rate: ${catRate_(c)}</div><div class="cat-name">${escapeHtml(catTitle_(c))}</div>${c.hidden ? '<div class="subtle">Hidden from customers</div>' : (c.hideFor && c.hideFor.length ? `<div class="subtle">Hidden from ${c.hideFor.length} customer${c.hideFor.length > 1 ? 's' : ''}</div>` : '')}</div>
+      <div class="cat-meta"><div class="cat-rate">Rate: ${catRate_(c)}</div><div class="cat-name">${escapeHtml(catTitle_(c))}</div>${catDateTxt_(c.createdAt) ? `<div class="subtle">📅 ${catDateTxt_(c.createdAt)}</div>` : ''}${c.hidden ? '<div class="subtle">Hidden from customers</div>' : (c.hideFor && c.hideFor.length ? `<div class="subtle">Hidden from ${c.hideFor.length} customer${c.hideFor.length > 1 ? 's' : ''}</div>` : '')}</div>
     </div>`).join('')}</div>${total > list.length ? `<div style="text-align:center;margin:14px 0"><button class="btn-pill ghost" onclick="catShow+=150;onCatSearch(catSearch)">Show more (${total - list.length} more)</button></div>` : ''}`;
 }
 function renderCatalog(main){
@@ -5472,6 +5547,8 @@ function renderCatalog(main){
       <input id="catSearchInp" class="filter-input" placeholder="Search design / size / brand" value="${escapeHtml(catSearch)}" oninput="catShow=150;onCatSearch(this.value)">
       <button class="btn-pill" onclick="openCatShare(false)">🔗 Share Catalog Link</button>
       <button class="btn-pill alt" onclick="catPickMany()">🗂️ Add Many Photos</button>
+      ${canCatFreeze_() ? `<button class="btn-pill ghost" onclick="openCatFreeze()">👥 Customer Photos</button>` : ''}
+      ${catDateBtn_()}
       ${catSel.size ? `<button class="btn-pill" style="background:#25D366;color:#063" onclick="catSendPhotos()">📷 Send ${catSel.size} photo${catSel.size > 1 ? 's' : ''} on WhatsApp</button><button class="btn-pill alt" onclick="openCatShare(true)">Share ${catSel.size} selected link</button><button class="btn-pill ghost" onclick="catSel.clear();render()">Clear</button>` : ''}
     </div>
     <div id="catGrid">${catGridHtml_()}</div>
@@ -6439,6 +6516,11 @@ function pubId_(){
 function pubVisible_(c){
   if(c.hidden) return false;
   if(catLoginOn_() && !pubDev_() && !isCustomerUser_()) return false;   // nothing shows before the Google sign-in is done (approved app customers are already signed in)
+  // Owner paused this app-customer's catalog updates: they keep seeing every design added up to the pause moment, but nothing newer
+  if(isCustomerUser_()){
+    const ae_ = approvalEntry_();
+    if(ae_ && ae_.catFrozenAt && c.createdAt && new Date(c.createdAt).getTime() > new Date(ae_.catFrozenAt).getTime()) return false;
+  }
   const who = pubId_();
   if(c.hideFor && c.hideFor.length) return !!who && !catHiddenFor_(c, who);   // not identified yet -> stay hidden
   return true;
